@@ -24,9 +24,12 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha1"
 	"fmt"
 	"log"
 	"math/rand"
+	"net/http"
+	"net/url"
 	"os"
 	"time"
 )
@@ -62,11 +65,28 @@ func main() {
 		peerId.WriteByte(byte(rand.Intn(255)))
 	}
 
-	bencode := NewBencode(file)
-	dict := bencode.decode()
+	// Bencode decode the torrent file
+	dict := BencodeDecode(file)
 
 	info := dict["info"].(map[string]interface{})
 	fmt.Println("Name:", info["name"])
 	fmt.Println("Announce URL:", dict["announce"])
 	fmt.Println("Comment:", dict["comment"])
+
+	size := 0
+	for _, v := range info["files"].([]Element) {
+		elem := v.Value.(map[string]interface{})
+		size += elem["length"].(int)
+	}
+	fmt.Printf("Total size: %.2f MB\n", float64(size)/1024/1024)
+
+	hasher := sha1.New()
+	hasher.Write(BencodeEncode(dict["info"]))
+
+	url := fmt.Sprintf("%s?info_hash=%s&peer_id=%s&port=%d&left=%d&event=started",
+		dict["announce"], url.QueryEscape(string(hasher.Sum(nil))), url.QueryEscape(peerId.String()), port, size)
+	fmt.Println("Sending req to:", url)
+
+	res, err := http.Get(url)
+	fmt.Printf("Response: %q\n", res)
 }
