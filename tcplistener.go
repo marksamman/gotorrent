@@ -6,7 +6,7 @@ import (
 	"net"
 )
 
-func TCPListener(port uint16) {
+func TCPListener(port int) {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		log.Fatal(err)
