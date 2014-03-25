@@ -23,9 +23,12 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
+	"time"
 )
 
 func printHelp() {
@@ -44,6 +47,18 @@ func main() {
 	}
 	defer file.Close()
 
+	rand.Seed(time.Now().UnixNano())
+
+	var peerId bytes.Buffer
+	for i := 0; i < 20; i++ {
+		peerId.WriteByte(byte(rand.Intn(255)))
+	}
+
 	bencode := NewBencode(file)
-	fmt.Printf("%q\n", bencode.decode())
+	dict := bencode.decode()
+
+	info := dict["info"].(map[string]interface{})
+	fmt.Println("Name:", info["name"])
+	fmt.Println("Announce URL:", dict["announce"])
+	fmt.Println("Comment:", dict["comment"])
 }
