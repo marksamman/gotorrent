@@ -19,6 +19,7 @@ _cgo_export.*
 
 _testmain.go
 
+*.torrent
 *.exe
 gotorrent
 
