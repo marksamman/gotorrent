@@ -56,7 +56,7 @@ type Element struct {
 
 func (bencode *Bencode) readList() []Element {
 	list := []Element{}
-	for true {
+	for {
 		ch, err := bencode.reader.ReadByte()
 		if err != nil {
 			log.Fatal(err)
@@ -99,7 +99,7 @@ func (bencode *Bencode) readString() string {
 
 func (bencode *Bencode) readDictionary() map[string]interface{} {
 	dict := make(map[string]interface{})
-	for true {
+	for {
 		key := bencode.readString()
 		ch, err := bencode.reader.ReadByte()
 		if err != nil {

@@ -41,14 +41,22 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Open torrent file
 	file, err := os.Open(os.Args[1])
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer file.Close()
 
+	// Seed rand
 	rand.Seed(time.Now().UnixNano())
 
+	// Start a TCP listener on a port in the range 6881-6889
+	var port uint16
+	port = 6881 + uint16(rand.Intn(8))
+	go TCPListener(port)
+
+	// Generate a 20 byte peerId
 	var peerId bytes.Buffer
 	for i := 0; i < 20; i++ {
 		peerId.WriteByte(byte(rand.Intn(255)))
