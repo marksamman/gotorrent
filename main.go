@@ -55,7 +55,7 @@ func main() {
 
 	// Start a TCP listener on a port in the range 6881-6889
 	port := 6881 + rand.Intn(8)
-	go TCPListener(6881 + port)
+	go TCPListener(port)
 
 	// Generate a 20 byte peerId
 	var peerId bytes.Buffer
