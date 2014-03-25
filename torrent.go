@@ -86,8 +86,8 @@ func (torrent *Torrent) getDownloadedSize() int {
 
 func (torrent *Torrent) getTotalSize() int {
 	size := 0
-	for _, v := range torrent.getInfo()["files"].([]Element) {
-		elem := v.Value.(map[string]interface{})
+	for _, v := range torrent.getInfo()["files"].([]interface{}) {
+		elem := v.(map[string]interface{})
 		size += elem["length"].(int)
 	}
 	return size

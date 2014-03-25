@@ -47,8 +47,8 @@ func (encoder *BencodeEncoder) writeInterfaceType(v interface{}) {
 	switch v.(type) {
 	case int:
 		encoder.writeInt(v.(int))
-	case []Element:
-		encoder.writeList(v.([]Element))
+	case []interface{}:
+		encoder.writeList(v.([]interface{}))
 	case map[string]interface{}:
 		encoder.writeDictionary(v.(map[string]interface{}))
 	case string:
@@ -56,10 +56,10 @@ func (encoder *BencodeEncoder) writeInterfaceType(v interface{}) {
 	}
 }
 
-func (encoder *BencodeEncoder) writeList(list []Element) {
+func (encoder *BencodeEncoder) writeList(list []interface{}) {
 	encoder.WriteByte('l')
 	for _, v := range list {
-		encoder.writeInterfaceType(v.Value)
+		encoder.writeInterfaceType(v)
 	}
 	encoder.WriteByte('e')
 }

@@ -50,12 +50,8 @@ func (decoder *BencodeDecoder) readInt() int {
 	return decoder.readIntUntil('e')
 }
 
-type Element struct {
-	Value interface{}
-}
-
-func (decoder *BencodeDecoder) readList() []Element {
-	list := []Element{}
+func (decoder *BencodeDecoder) readList() []interface{} {
+	var list []interface{}
 	for {
 		ch, err := decoder.ReadByte()
 		if err != nil {
@@ -64,11 +60,11 @@ func (decoder *BencodeDecoder) readList() []Element {
 
 		switch ch {
 		case 'i':
-			list = append(list, Element{decoder.readInt()})
+			list = append(list, decoder.readInt())
 		case 'l':
-			list = append(list, Element{decoder.readList()})
+			list = append(list, decoder.readList())
 		case 'd':
-			list = append(list, Element{decoder.readDictionary()})
+			list = append(list, decoder.readDictionary())
 		case 'e':
 			return list
 		default:
@@ -76,7 +72,7 @@ func (decoder *BencodeDecoder) readList() []Element {
 				log.Fatal(err)
 			}
 
-			list = append(list, Element{decoder.readString()})
+			list = append(list, decoder.readString())
 		}
 	}
 	return list
@@ -86,12 +82,9 @@ func (decoder *BencodeDecoder) readString() string {
 	len := decoder.readIntUntil(':')
 
 	stringBuffer := make([]byte, len)
-	n, err := decoder.Read(stringBuffer)
-	if err != nil {
+	if n, err := decoder.Read(stringBuffer); err != nil {
 		log.Fatal(err)
-	}
-
-	if n != len {
+	} else if n != len {
 		log.Fatal("missing data in string")
 	}
 	return string(stringBuffer)
