@@ -77,5 +77,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Response: %q\n", resp)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		log.Fatalf("bad response from tracker: %s", resp.Status)
+	}
+
+	fmt.Printf("Response: %q\n", BencodeDecode(resp.Body))
 }
