@@ -90,7 +90,11 @@ func (torrent *Torrent) getInfo() map[string]interface{} {
 }
 
 func (torrent *Torrent) getComment() string {
-	return torrent.Data["comment"].(string)
+	comment, exists := torrent.Data["comment"]
+	if !exists {
+		return ""
+	}
+	return comment.(string)
 }
 
 func (torrent *Torrent) getDownloadedSize() int {
