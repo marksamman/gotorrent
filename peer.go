@@ -37,7 +37,7 @@ type Peer struct {
 
 func (peer *Peer) getStringIP() string {
 	return fmt.Sprintf("%d.%d.%d.%d",
-		peer.IP>>24, (peer.IP>>16)&255, (peer.IP>>8)%255, peer.IP&255)
+		peer.IP>>24, (peer.IP>>16)&255, (peer.IP>>8)&255, peer.IP&255)
 }
 
 func (peer *Peer) connect() {
