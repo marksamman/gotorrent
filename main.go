@@ -27,21 +27,32 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
-	"net/url"
 	"os"
 	"strconv"
 	"time"
 )
 
-func printHelp() {
-	fmt.Println("usage: gotorrent file")
+type Client struct {
+	PeerId []byte
 }
+
+var client Client
 
 func main() {
 	if len(os.Args) <= 1 {
-		printHelp()
-		os.Exit(0)
+		fmt.Println("usage: gotorrent file")
+		return
 	}
+
+	// Seed rand
+	rand.Seed(time.Now().UnixNano())
+
+	// Generate a 20 byte peerId
+	var peerId bytes.Buffer
+	for i := 0; i < 20; i++ {
+		peerId.WriteByte(byte(rand.Intn(255)))
+	}
+	client.PeerId = peerId.Bytes()
 
 	// Open torrent file
 	torrent := Torrent{}
@@ -50,18 +61,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Seed rand
-	rand.Seed(time.Now().UnixNano())
-
 	// Start a TCP listener on a port in the range 6881-6889
 	port := 6881 + rand.Intn(8)
 	go TCPListener(port)
-
-	// Generate a 20 byte peerId
-	var peerId bytes.Buffer
-	for i := 0; i < 20; i++ {
-		peerId.WriteByte(byte(rand.Intn(255)))
-	}
 
 	fmt.Println("Name:", torrent.getName())
 	fmt.Println("Announce URL:", torrent.getAnnounceURL())
@@ -70,7 +72,6 @@ func main() {
 
 	params := make(map[string]string)
 	params["event"] = "started"
-	params["peer_id"] = url.QueryEscape(peerId.String())
 	params["port"] = strconv.Itoa(port)
 
 	httpResponse, err := torrent.sendTrackerRequest(params)
@@ -85,9 +86,9 @@ func main() {
 
 	resp := BencodeDecode(httpResponse.Body)
 	torrent.parsePeers(resp["peers"])
-	fmt.Println("Peers:")
+
+	fmt.Println("Connecting to peers...")
 	for _, peer := range torrent.Peers {
-		fmt.Printf("%s:%d\n", peer.getStringIP(), peer.Port)
 		go func(peer Peer) {
 			peer.connect()
 		}(peer)

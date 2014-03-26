@@ -23,7 +23,6 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"net"
@@ -32,6 +31,8 @@ import (
 type Peer struct {
 	IP   uint32
 	Port uint16
+
+	torrent *Torrent
 }
 
 func (peer *Peer) getStringIP() string {
@@ -41,6 +42,7 @@ func (peer *Peer) getStringIP() string {
 
 func (peer *Peer) connect() {
 	addr := fmt.Sprintf("%s:%d", peer.getStringIP(), peer.Port)
+	fmt.Println("connecting to:", addr)
 
 	conn, err := net.Dial("tcp4", addr)
 	if err != nil {
@@ -52,21 +54,8 @@ func (peer *Peer) connect() {
 	log.Printf("connected to peer: %s\n", addr)
 
 	// Send handshake
-	var buffer bytes.Buffer
-
-	// length of the string "BitTorrent Protocol"
-	buffer.WriteByte(19)
-	buffer.WriteString("BitTorrent Protocol")
-
-	// 8 reserved bytes
-	buffer.WriteString("\x00\x00\x00\x00\x00\x00\x00\x00")
-
-	if n, err := conn.Write(buffer.Bytes()); err != nil {
+	if _, err := conn.Write(peer.torrent.Handshake); err != nil {
 		log.Printf("failed to send handshake to peer: %s\n", err)
-		return
-	} else if n != buffer.Len() {
-		log.Printf("not enough data sent to peer in handshake: %d/%d\n",
-			n, buffer.Len())
 		return
 	}
 

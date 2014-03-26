@@ -32,9 +32,10 @@ import (
 )
 
 type Torrent struct {
-	Data     map[string]interface{}
-	InfoHash []byte
-	Peers    []Peer
+	Data      map[string]interface{}
+	InfoHash  []byte
+	Peers     []Peer
+	Handshake []byte
 }
 
 func (torrent *Torrent) open(filename string) error {
@@ -48,6 +49,15 @@ func (torrent *Torrent) open(filename string) error {
 	hasher := sha1.New()
 	hasher.Write(BencodeEncode(torrent.getInfo()))
 	torrent.InfoHash = hasher.Sum(nil)
+
+	var buffer bytes.Buffer
+	buffer.WriteByte(19) // length of the string "BitTorrent Protocol"
+	buffer.WriteString("BitTorrent Protocol")
+	buffer.WriteString("\x00\x00\x00\x00\x00\x00\x00\x00") // reserved
+	buffer.Write(torrent.InfoHash)
+	buffer.Write(client.PeerId)
+	torrent.Handshake = buffer.Bytes()
+
 	return nil
 }
 
@@ -60,8 +70,10 @@ func (torrent *Torrent) sendTrackerRequest(params map[string]string) (*http.Resp
 		paramBuf.WriteByte('&')
 	}
 	return http.Get(
-		fmt.Sprintf("%s?%sinfo_hash=%s&left=%d", torrent.getAnnounceURL(),
-			paramBuf.String(), url.QueryEscape(string(torrent.InfoHash)),
+		fmt.Sprintf("%s?%speer_id=%s&info_hash=%s&left=%d",
+			torrent.getAnnounceURL(), paramBuf.String(),
+			url.QueryEscape(string(client.PeerId)),
+			url.QueryEscape(string(torrent.InfoHash)),
 			torrent.getTotalSize()-torrent.getDownloadedSize()))
 }
 
@@ -107,7 +119,7 @@ func (torrent *Torrent) parsePeers(peers interface{}) {
 			var port uint16
 			port = uint16(peers[pos+4])<<8 | uint16(peers[pos+5])
 
-			torrent.Peers = append(torrent.Peers, Peer{ipv4_addr, port})
+			torrent.Peers = append(torrent.Peers, Peer{ipv4_addr, port, torrent})
 		}
 	case map[string]interface{}:
 		// TODO: dict model
