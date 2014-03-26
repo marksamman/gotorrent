@@ -106,9 +106,8 @@ func (torrent *Torrent) getTotalSize() int {
 	} else {
 		// Multiple files
 		size := 0
-		for _, v := range torrent.getInfo()["files"].([]interface{}) {
-			elem := v.(map[string]interface{})
-			size += elem["length"].(int)
+		for _, v := range info["files"].([]interface{}) {
+			size += v.(map[string]interface{})["length"].(int)
 		}
 		return size
 	}
