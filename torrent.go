@@ -98,12 +98,20 @@ func (torrent *Torrent) getDownloadedSize() int {
 }
 
 func (torrent *Torrent) getTotalSize() int {
-	size := 0
-	for _, v := range torrent.getInfo()["files"].([]interface{}) {
-		elem := v.(map[string]interface{})
-		size += elem["length"].(int)
+	info := torrent.getInfo()
+	length, exists := info["length"]
+	if exists {
+		// Single file
+		return length.(int)
+	} else {
+		// Multiple files
+		size := 0
+		for _, v := range torrent.getInfo()["files"].([]interface{}) {
+			elem := v.(map[string]interface{})
+			size += elem["length"].(int)
+		}
+		return size
 	}
-	return size
 }
 
 func (torrent *Torrent) parsePeers(peers interface{}) {
