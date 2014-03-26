@@ -73,15 +73,20 @@ func main() {
 	params["peer_id"] = url.QueryEscape(peerId.String())
 	params["port"] = strconv.Itoa(port)
 
-	resp, err := torrent.sendTrackerRequest(params)
+	httpResponse, err := torrent.sendTrackerRequest(params)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer httpResponse.Body.Close()
 
-	if resp.StatusCode != 200 {
-		log.Fatalf("bad response from tracker: %s", resp.Status)
+	if httpResponse.StatusCode != 200 {
+		log.Fatalf("bad response from tracker: %s", httpResponse.Status)
 	}
 
-	fmt.Printf("Response: %q\n", BencodeDecode(resp.Body))
+	resp := BencodeDecode(httpResponse.Body)
+	torrent.parsePeers(resp["peers"])
+	fmt.Println("Peers:")
+	for _, peer := range torrent.Peers {
+		fmt.Printf("%s:%d\n", peer.getStringIP(), peer.Port)
+	}
 }

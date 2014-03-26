@@ -34,6 +34,7 @@ import (
 type Torrent struct {
 	Data     map[string]interface{}
 	InfoHash []byte
+	Peers    []Peer
 }
 
 func (torrent *Torrent) open(filename string) error {
@@ -91,4 +92,27 @@ func (torrent *Torrent) getTotalSize() int {
 		size += elem["length"].(int)
 	}
 	return size
+}
+
+func (torrent *Torrent) parsePeers(peers interface{}) {
+	switch peers.(type) {
+	case string:
+		peers := peers.(string)
+		for pos := 0; pos < len(peers); pos += 6 {
+			// 4 bytes ip
+			var ipv4_addr uint32
+			ipv4_addr = uint32(peers[pos])<<24 | uint32(peers[pos+1])<<16 | uint32(peers[pos+2])<<8 | uint32(peers[pos+3])
+
+			// 2 bytes port
+			var port uint16
+			port = uint16(peers[pos+4])<<8 | uint16(peers[pos+5])
+
+			torrent.Peers = append(torrent.Peers, Peer{ipv4_addr, port})
+		}
+	case map[string]interface{}:
+		// TODO: dict model
+		// peer_id: string
+		// ip: hexed ipv6, dotted quad ipv4, dns name string
+		// port: int
+	}
 }
