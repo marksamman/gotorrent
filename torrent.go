@@ -70,7 +70,7 @@ func (torrent *Torrent) sendTrackerRequest(params map[string]string) (*http.Resp
 		paramBuf.WriteByte('&')
 	}
 	return http.Get(
-		fmt.Sprintf("%s?%speer_id=%s&info_hash=%s&left=%d",
+		fmt.Sprintf("%s?%speer_id=%s&info_hash=%s&left=%d&compact=1",
 			torrent.getAnnounceURL(), paramBuf.String(),
 			url.QueryEscape(string(client.PeerId)),
 			url.QueryEscape(string(torrent.InfoHash)),
@@ -100,10 +100,7 @@ func (torrent *Torrent) getDownloadedSize() int {
 func (torrent *Torrent) getTotalSize() int {
 	info := torrent.getInfo()
 	length, exists := info["length"]
-	if exists {
-		// Single file
-		return length.(int)
-	} else {
+	if !exists {
 		// Multiple files
 		size := 0
 		for _, v := range info["files"].([]interface{}) {
@@ -111,6 +108,9 @@ func (torrent *Torrent) getTotalSize() int {
 		}
 		return size
 	}
+
+	// Single file
+	return length.(int)
 }
 
 func (torrent *Torrent) parsePeers(peers interface{}) {
