@@ -24,8 +24,8 @@ package main
 
 import (
 	"bufio"
+	"io"
 	"log"
-	"os"
 	"strconv"
 )
 
@@ -129,8 +129,8 @@ func (decoder *BencodeDecoder) readDictionary() map[string]interface{} {
 	return dict
 }
 
-func BencodeDecode(file *os.File) map[string]interface{} {
-	decoder := BencodeDecoder{*bufio.NewReader(file)}
+func BencodeDecode(reader io.Reader) map[string]interface{} {
+	decoder := BencodeDecoder{*bufio.NewReader(reader)}
 
 	firstByte, err := decoder.ReadByte()
 	if err != nil {
