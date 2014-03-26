@@ -82,10 +82,12 @@ func (decoder *BencodeDecoder) readString() string {
 	len := decoder.readIntUntil(':')
 
 	stringBuffer := make([]byte, len)
-	if n, err := decoder.Read(stringBuffer); err != nil {
-		log.Fatal(err)
-	} else if n != len {
-		log.Fatal("missing data in string")
+	for pos := 0; pos < len; {
+		if n, err := decoder.Read(stringBuffer[pos:]); err != nil {
+			log.Fatal(err)
+		} else {
+			pos += n
+		}
 	}
 	return string(stringBuffer)
 }
