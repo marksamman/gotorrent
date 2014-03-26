@@ -22,7 +22,12 @@
 
 package main
 
-import "fmt"
+import (
+	"bytes"
+	"fmt"
+	"log"
+	"net"
+)
 
 type Peer struct {
 	IP   uint32
@@ -30,5 +35,40 @@ type Peer struct {
 }
 
 func (peer *Peer) getStringIP() string {
-	return fmt.Sprintf("%d.%d.%d.%d", peer.IP>>24, (peer.IP>>16)&255, (peer.IP>>8)%255, peer.IP&255)
+	return fmt.Sprintf("%d.%d.%d.%d",
+		peer.IP>>24, (peer.IP>>16)&255, (peer.IP>>8)%255, peer.IP&255)
+}
+
+func (peer *Peer) connect() {
+	addr := fmt.Sprintf("%s:%d", peer.getStringIP(), peer.Port)
+
+	conn, err := net.Dial("tcp4", addr)
+	if err != nil {
+		log.Printf("failed to connect to peer: %s\n", err)
+		return
+	}
+	defer conn.Close()
+
+	log.Printf("connected to peer: %s\n", addr)
+
+	// Send handshake
+	var buffer bytes.Buffer
+
+	// length of the string "BitTorrent Protocol"
+	buffer.WriteByte(19)
+	buffer.WriteString("BitTorrent Protocol")
+
+	// 8 reserved bytes
+	buffer.WriteString("\x00\x00\x00\x00\x00\x00\x00\x00")
+
+	if n, err := conn.Write(buffer.Bytes()); err != nil {
+		log.Printf("failed to send handshake to peer: %s\n", err)
+		return
+	} else if n != buffer.Len() {
+		log.Printf("not enough data sent to peer in handshake: %d/%d\n",
+			n, buffer.Len())
+		return
+	}
+
+	log.Printf("sent handshake to peer: %s\n", addr)
 }

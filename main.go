@@ -88,5 +88,9 @@ func main() {
 	fmt.Println("Peers:")
 	for _, peer := range torrent.Peers {
 		fmt.Printf("%s:%d\n", peer.getStringIP(), peer.Port)
+		go func(peer Peer) {
+			peer.connect()
+		}(peer)
 	}
+	time.Sleep(time.Minute)
 }

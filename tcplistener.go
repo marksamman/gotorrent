@@ -44,5 +44,5 @@ func TCPListener(port int) {
 }
 
 func handleConnection(conn net.Conn) {
-
+	fmt.Println("receive connection")
 }
