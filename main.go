@@ -87,12 +87,6 @@ func main() {
 
 	resp := BencodeDecode(httpResponse.Body)
 	torrent.parsePeers(resp["peers"])
-
-	fmt.Println("Connecting to peers...")
-	for _, peer := range torrent.Peers {
-		go func(peer Peer) {
-			peer.connect()
-		}(peer)
-	}
+	torrent.startDownloading()
 	time.Sleep(time.Minute)
 }

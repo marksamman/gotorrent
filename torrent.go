@@ -27,6 +27,7 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -38,6 +39,12 @@ type Torrent struct {
 	Peers     []Peer
 	Handshake []byte
 	Pieces    map[string]struct{}
+}
+
+type FilePiece struct {
+	index uint32
+	begin uint32
+	data  []byte
 }
 
 func (torrent *Torrent) open(filename string) error {
@@ -61,6 +68,32 @@ func (torrent *Torrent) open(filename string) error {
 	torrent.Handshake = buffer.Bytes()
 
 	return nil
+}
+
+func (torrent *Torrent) startDownloading() {
+	file, err := os.Create(torrent.getInfo()["name"].(string))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	pieceChannel := make(chan FilePiece)
+	for _, peer := range torrent.Peers {
+		go func(peer Peer) {
+			peer.connect(pieceChannel)
+		}(peer)
+	}
+
+	for {
+		select {
+		case piece := <-pieceChannel:
+			var seekPos int64
+			seekPos = int64(piece.index)*int64(torrent.getPieceLength()) + int64(piece.begin)
+			file.Seek(seekPos, 0)
+			file.Write(piece.data)
+			file.Sync()
+		}
+	}
 }
 
 func (torrent *Torrent) sendTrackerRequest(params map[string]string) (*http.Response, error) {
@@ -99,24 +132,37 @@ func (torrent *Torrent) getComment() string {
 	return comment.(string)
 }
 
-func (torrent *Torrent) getDownloadedSize() int {
+func (torrent *Torrent) getPiecesSHA1() []string {
+	strings := []string{}
+	pieces := torrent.getInfo()["pieces"].(string)
+	for i := 0; i < len(pieces); i += 20 {
+		strings = append(strings, pieces[i:i+20])
+	}
+	return strings
+}
+
+func (torrent *Torrent) getPieceLength() int {
+	return torrent.getInfo()["piece length"].(int)
+}
+
+func (torrent *Torrent) getDownloadedSize() int64 {
 	return 0
 }
 
-func (torrent *Torrent) getTotalSize() int {
+func (torrent *Torrent) getTotalSize() int64 {
 	info := torrent.getInfo()
 	length, exists := info["length"]
 	if !exists {
 		// Multiple files
-		size := 0
+		var size int64
 		for _, v := range info["files"].([]interface{}) {
-			size += v.(map[string]interface{})["length"].(int)
+			size += int64(v.(map[string]interface{})["length"].(int))
 		}
 		return size
 	}
 
 	// Single file
-	return length.(int)
+	return int64(length.(int))
 }
 
 func (torrent *Torrent) parsePeers(peers interface{}) {

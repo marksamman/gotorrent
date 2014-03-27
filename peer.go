@@ -82,7 +82,7 @@ func (peer *Peer) readN(n int) ([]byte, error) {
 	return buf, nil
 }
 
-func (peer *Peer) connect() {
+func (peer *Peer) connect(pieceChannel chan FilePiece) {
 	addr := fmt.Sprintf("%s:%d", peer.getStringIP(), peer.Port)
 	log.Println("connecting to:", addr)
 
@@ -118,17 +118,35 @@ func (peer *Peer) connect() {
 	// TODO: Validate peer id if provided by tracker
 
 	log.Printf("successfully exchanged handshake with peer: %s\n", addr)
-
 	for {
-		err := peer.processMessage()
+		err := peer.processMessage(pieceChannel)
 		if err != nil {
 			log.Printf("failed to process message from peer %s: %s\n", addr, err)
 			return
 		}
+
+		if !peer.choked {
+			for k, _ := range peer.torrent.getPiecesSHA1() {
+				pieceLength := int64(peer.torrent.getPieceLength())
+				var pos int64
+				pos = 0
+				for pieceLength != 0 {
+					req := pieceLength
+					if req > 32768 {
+						req = 32768
+					}
+
+					peer.sendRequest(uint32(k), 0, uint32(req))
+					pos += req
+					pieceLength -= req
+				}
+			}
+			peer.choked = true
+		}
 	}
 }
 
-func (peer *Peer) processMessage() error {
+func (peer *Peer) processMessage(pieceChannel chan FilePiece) error {
 	lengthHeader, err := peer.readN(4)
 	if err != nil {
 		return err
@@ -145,6 +163,8 @@ func (peer *Peer) processMessage() error {
 	if err != nil {
 		return err
 	}
+
+	log.Printf("receive message from peer, len: %d, type: %d\n", length, data[0])
 
 	switch data[0] {
 	case Choke:
@@ -177,16 +197,12 @@ func (peer *Peer) processMessage() error {
 			return errors.New("length of have packet must be 5")
 		}
 
-		piece, err := peer.readN(4)
-		if err != nil {
-			return err
-		}
-
-		stringPiece := string(piece)
+		stringPiece := string(data[1:])
 		_, exists := peer.torrent.Pieces[stringPiece]
 		if exists {
 			peer.pieces[stringPiece] = struct{}{}
 		}
+		peer.sendInterested()
 	case Bitfield:
 		// ignore
 		break
@@ -211,10 +227,11 @@ func (peer *Peer) processMessage() error {
 		}
 
 		buf := bytes.NewBuffer(data[1:])
-		var index, begin uint32
-		binary.Read(buf, binary.BigEndian, &index)
-		binary.Read(buf, binary.BigEndian, &begin)
-		// block := data[9:]
+		filePiece := FilePiece{}
+		binary.Read(buf, binary.BigEndian, &filePiece.index)
+		binary.Read(buf, binary.BigEndian, &filePiece.begin)
+		filePiece.data = data[9:]
+		pieceChannel <- filePiece
 
 	case Cancel:
 		if length != 13 {
@@ -236,4 +253,37 @@ func (peer *Peer) processMessage() error {
 		binary.Read(bytes.NewBuffer(data[1:]), binary.BigEndian, &port)
 	}
 	return nil
+}
+
+func (peer *Peer) sendInterested() {
+	peer.connection.Write([]byte{0, 0, 0, 1, 2})
+}
+
+func (peer *Peer) sendRequest(index, begin, length uint32) {
+	var packet bytes.Buffer
+	packet.WriteByte(0)
+	packet.WriteByte(0)
+	packet.WriteByte(0)
+	packet.WriteByte(13)
+	packet.WriteByte(Request)
+
+	// Index
+	packet.WriteByte(byte(index >> 24))
+	packet.WriteByte(byte(index >> 16))
+	packet.WriteByte(byte(index >> 8))
+	packet.WriteByte(byte(index))
+
+	// Begin
+	packet.WriteByte(byte(begin >> 24))
+	packet.WriteByte(byte(begin >> 16))
+	packet.WriteByte(byte(begin >> 8))
+	packet.WriteByte(byte(begin))
+
+	// Length
+	packet.WriteByte(byte(length >> 24))
+	packet.WriteByte(byte(length >> 16))
+	packet.WriteByte(byte(length >> 8))
+	packet.WriteByte(byte(length))
+
+	peer.connection.Write(packet.Bytes())
 }
