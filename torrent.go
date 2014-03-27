@@ -25,6 +25,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha1"
+	"encoding/binary"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -36,6 +37,7 @@ type Torrent struct {
 	InfoHash  []byte
 	Peers     []Peer
 	Handshake []byte
+	Pieces    map[string]struct{}
 }
 
 func (torrent *Torrent) open(filename string) error {
@@ -120,17 +122,13 @@ func (torrent *Torrent) getTotalSize() int {
 func (torrent *Torrent) parsePeers(peers interface{}) {
 	switch peers.(type) {
 	case string:
-		peers := peers.(string)
-		for pos := 0; pos < len(peers); pos += 6 {
+		buf := bytes.NewBufferString(peers.(string))
+		for buf.Len() != 0 {
 			// 4 bytes ip
-			var ipv4_addr uint32
-			ipv4_addr = uint32(peers[pos])<<24 | uint32(peers[pos+1])<<16 | uint32(peers[pos+2])<<8 | uint32(peers[pos+3])
-
-			// 2 bytes port
-			var port uint16
-			port = uint16(peers[pos+4])<<8 | uint16(peers[pos+5])
-
-			torrent.Peers = append(torrent.Peers, NewPeer(ipv4_addr, port, torrent))
+			peer := NewPeer(torrent)
+			binary.Read(buf, binary.BigEndian, &peer.IP)
+			binary.Read(buf, binary.BigEndian, &peer.Port)
+			torrent.Peers = append(torrent.Peers, peer)
 		}
 	case map[string]interface{}:
 		// TODO: dict model
