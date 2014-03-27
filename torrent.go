@@ -52,7 +52,7 @@ func (torrent *Torrent) open(filename string) error {
 
 	var buffer bytes.Buffer
 	buffer.WriteByte(19) // length of the string "BitTorrent Protocol"
-	buffer.WriteString("BitTorrent Protocol")
+	buffer.WriteString("BitTorrent protocol")
 	buffer.WriteString("\x00\x00\x00\x00\x00\x00\x00\x00") // reserved
 	buffer.Write(torrent.InfoHash)
 	buffer.Write(client.PeerId)
@@ -130,7 +130,7 @@ func (torrent *Torrent) parsePeers(peers interface{}) {
 			var port uint16
 			port = uint16(peers[pos+4])<<8 | uint16(peers[pos+5])
 
-			torrent.Peers = append(torrent.Peers, Peer{ipv4_addr, port, torrent})
+			torrent.Peers = append(torrent.Peers, NewPeer(ipv4_addr, port, torrent))
 		}
 	case map[string]interface{}:
 		// TODO: dict model
