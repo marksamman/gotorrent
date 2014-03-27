@@ -31,6 +31,19 @@ import (
 	"net"
 )
 
+const (
+	Choke = iota
+	Unchoke
+	Interested
+	NotInterested
+	Have
+	Bitfield
+	Request
+	Piece
+	Cancel
+	Port
+)
+
 type Peer struct {
 	IP        uint32
 	Port      uint16
@@ -134,32 +147,32 @@ func (peer *Peer) processMessage() error {
 	}
 
 	switch data[0] {
-	case 0: // choke
+	case Choke:
 		if length != 1 {
 			return errors.New("length of choke packet must be 1")
 		}
 
 		peer.choked = true
-	case 1: // unchoke
+	case Unchoke:
 		if length != 1 {
 			return errors.New("length of unchoke packet must be 1")
 		}
 
 		peer.choked = false
-	case 2: // interested
+	case Interested:
 		if length != 1 {
 			return errors.New("length of interested packet must be 1")
 		}
 
 		peer.interested = true
 		// TODO: Unchoke peer and send files
-	case 3: // not interested
+	case NotInterested:
 		if length != 1 {
 			return errors.New("length of not interested packet must be 1")
 		}
 
 		peer.interested = false
-	case 4: // have
+	case Have:
 		if length != 5 {
 			return errors.New("length of have packet must be 5")
 		}
@@ -174,11 +187,11 @@ func (peer *Peer) processMessage() error {
 		if exists {
 			peer.pieces[stringPiece] = struct{}{}
 		}
-	case 5: // bitfield
+	case Bitfield:
 		// ignore
 		break
 
-	case 6: // request
+	case Request:
 		if length != 13 {
 			return errors.New("length of request packet must be 13")
 		}
@@ -192,7 +205,7 @@ func (peer *Peer) processMessage() error {
 			return errors.New("peer requested length over 32KB")
 		}
 
-	case 7: // piece
+	case Piece:
 		if length < 10 {
 			return errors.New("length of piece packet must be at least 10")
 		}
@@ -203,7 +216,7 @@ func (peer *Peer) processMessage() error {
 		binary.Read(buf, binary.BigEndian, &begin)
 		// block := data[9:]
 
-	case 8: // cancel
+	case Cancel:
 		if length != 13 {
 			return errors.New("length of cancel packet must be 13")
 		}
@@ -214,7 +227,7 @@ func (peer *Peer) processMessage() error {
 		binary.Read(buf, binary.BigEndian, &begin)
 		binary.Read(buf, binary.BigEndian, &length)
 
-	case 9: // port
+	case Port:
 		if length != 3 {
 			return errors.New("length of port packet must be 3")
 		}
