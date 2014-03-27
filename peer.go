@@ -92,7 +92,7 @@ func (peer *Peer) connect() {
 	// Receive handshake
 	peer.handshake, err = peer.readN(68, conn)
 	if err != nil {
-		log.Printf("failed to read handshake frmo peer: %s\n", err)
+		log.Printf("failed to read handshake from peer: %s\n", err)
 		return
 	}
 	log.Printf("received handshake from peer: %s\n", peer.handshake)
