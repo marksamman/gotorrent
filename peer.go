@@ -261,29 +261,10 @@ func (peer *Peer) sendInterested() {
 
 func (peer *Peer) sendRequest(index, begin, length uint32) {
 	var packet bytes.Buffer
-	packet.WriteByte(0)
-	packet.WriteByte(0)
-	packet.WriteByte(0)
-	packet.WriteByte(13)
+	binary.Write(&packet, binary.BigEndian, uint32(13))
 	packet.WriteByte(Request)
-
-	// Index
-	packet.WriteByte(byte(index >> 24))
-	packet.WriteByte(byte(index >> 16))
-	packet.WriteByte(byte(index >> 8))
-	packet.WriteByte(byte(index))
-
-	// Begin
-	packet.WriteByte(byte(begin >> 24))
-	packet.WriteByte(byte(begin >> 16))
-	packet.WriteByte(byte(begin >> 8))
-	packet.WriteByte(byte(begin))
-
-	// Length
-	packet.WriteByte(byte(length >> 24))
-	packet.WriteByte(byte(length >> 16))
-	packet.WriteByte(byte(length >> 8))
-	packet.WriteByte(byte(length))
-
+	binary.Write(&packet, binary.BigEndian, index)
+	binary.Write(&packet, binary.BigEndian, begin)
+	binary.Write(&packet, binary.BigEndian, length)
 	peer.connection.Write(packet.Bytes())
 }
