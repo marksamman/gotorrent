@@ -23,6 +23,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"net"
@@ -95,5 +96,14 @@ func (peer *Peer) connect() {
 		log.Printf("failed to read handshake from peer: %s\n", err)
 		return
 	}
-	log.Printf("received handshake from peer: %s\n", peer.handshake)
+
+	// Validate info hash
+	if !bytes.Equal(peer.handshake[28:48], peer.torrent.InfoHash) {
+		log.Printf("info hash mismatch from peer: %s", addr)
+		return
+	}
+
+	// TODO: Validate peer id if provided by tracker
+
+	log.Printf("successfully exchanged handshake with peer: %s\n", addr)
 }
