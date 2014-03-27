@@ -132,8 +132,8 @@ func (peer *Peer) connect(pieceChannel chan FilePiece) {
 				pos = 0
 				for pieceLength != 0 {
 					req := pieceLength
-					if req > 32768 {
-						req = 32768
+					if req > 16384 {
+						req = 16384
 					}
 
 					peer.sendRequest(uint32(k), 0, uint32(req))
