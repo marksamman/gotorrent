@@ -104,6 +104,12 @@ func (torrent *Torrent) download() {
 	for {
 		select {
 		case piece := <-torrent.pieceChannel:
+			if !torrent.checkPieceHash(&piece) {
+				// TODO: Disconnect the peer that sent us the piece
+				torrent.Pieces[piece.index].busy = false
+				break
+			}
+
 			torrent.Pieces[piece.index].done = true
 
 			file.Seek(int64(piece.index)*int64(torrent.getPieceLength(0)), 0)
@@ -138,8 +144,10 @@ func (torrent *Torrent) download() {
 	}
 }
 
-func (torrent *Torrent) verifyPiece(piece *FilePiece) bool {
-	return true
+func (torrent *Torrent) checkPieceHash(piece *FilePiece) bool {
+	hasher := sha1.New()
+	hasher.Write(piece.data)
+	return bytes.Equal(hasher.Sum(nil), []byte(torrent.Pieces[piece.index].hash))
 }
 
 func (torrent *Torrent) sendTrackerRequest(params map[string]string) (*http.Response, error) {
