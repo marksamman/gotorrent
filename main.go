@@ -87,6 +87,5 @@ func main() {
 
 	resp := BencodeDecode(httpResponse.Body)
 	torrent.parsePeers(resp["peers"])
-	torrent.startDownloading()
-	time.Sleep(time.Minute)
+	torrent.download()
 }

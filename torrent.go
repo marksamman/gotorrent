@@ -28,6 +28,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -38,12 +39,21 @@ type Torrent struct {
 	InfoHash  []byte
 	Peers     []Peer
 	Handshake []byte
-	Pieces    map[string]struct{}
+	Pieces    []TorrentPiece
+
+	checkInterest    chan uint32
+	interestResponse chan bool
+	pieceChannel     chan FilePiece
+}
+
+type TorrentPiece struct {
+	hash string
+	busy bool
+	done bool
 }
 
 type FilePiece struct {
 	index uint32
-	begin uint32
 	data  []byte
 }
 
@@ -67,33 +77,69 @@ func (torrent *Torrent) open(filename string) error {
 	buffer.Write(client.PeerId)
 	torrent.Handshake = buffer.Bytes()
 
+	pieces := torrent.getInfo()["pieces"].(string)
+	for i := 0; i < len(pieces); i += 20 {
+		torrent.Pieces = append(torrent.Pieces, TorrentPiece{pieces[i : i+20], false, false})
+	}
+
 	return nil
 }
 
-func (torrent *Torrent) startDownloading() {
+func (torrent *Torrent) download() {
 	file, err := os.Create(torrent.getInfo()["name"].(string))
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer file.Close()
 
-	pieceChannel := make(chan FilePiece)
+	torrent.pieceChannel = make(chan FilePiece)
+	torrent.checkInterest = make(chan uint32)
+	torrent.interestResponse = make(chan bool)
 	for _, peer := range torrent.Peers {
 		go func(peer Peer) {
-			peer.connect(pieceChannel)
+			peer.connect()
 		}(peer)
 	}
 
 	for {
 		select {
-		case piece := <-pieceChannel:
-			var seekPos int64
-			seekPos = int64(piece.index)*int64(torrent.getPieceLength()) + int64(piece.begin)
-			file.Seek(seekPos, 0)
+		case piece := <-torrent.pieceChannel:
+			torrent.Pieces[piece.index].done = true
+
+			file.Seek(int64(piece.index)*int64(torrent.getPieceLength(0)), 0)
 			file.Write(piece.data)
 			file.Sync()
+
+			doneCount := 0
+			for _, v := range torrent.Pieces {
+				if v.done {
+					doneCount++
+				}
+			}
+
+			fmt.Printf("Downloaded: %.2f%c\n", float64(doneCount)*100/float64(len(torrent.Pieces)), '%')
+			if doneCount == len(torrent.Pieces) {
+				return
+			}
+
+		case pieceIndex := <-torrent.checkInterest:
+			if pieceIndex >= uint32(len(torrent.Pieces)) {
+				torrent.interestResponse <- false
+				break
+			}
+
+			if torrent.Pieces[pieceIndex].busy {
+				torrent.interestResponse <- false
+			} else {
+				torrent.interestResponse <- true
+				torrent.Pieces[pieceIndex].busy = true
+			}
 		}
 	}
+}
+
+func (torrent *Torrent) verifyPiece(piece *FilePiece) bool {
+	return true
 }
 
 func (torrent *Torrent) sendTrackerRequest(params map[string]string) (*http.Response, error) {
@@ -132,21 +178,26 @@ func (torrent *Torrent) getComment() string {
 	return comment.(string)
 }
 
-func (torrent *Torrent) getPiecesSHA1() []string {
-	strings := []string{}
-	pieces := torrent.getInfo()["pieces"].(string)
-	for i := 0; i < len(pieces); i += 20 {
-		strings = append(strings, pieces[i:i+20])
-	}
-	return strings
+func (torrent *Torrent) getPieceCount() int {
+	return len(torrent.Pieces)
 }
 
-func (torrent *Torrent) getPieceLength() int {
-	return torrent.getInfo()["piece length"].(int)
+func (torrent *Torrent) getPieceLength(pieceIndex int) int {
+	pieceLength := torrent.getInfo()["piece length"].(int)
+	if pieceIndex == len(torrent.Pieces)-1 {
+		return int(torrent.getTotalSize() % int64(pieceLength))
+	}
+	return pieceLength
 }
 
 func (torrent *Torrent) getDownloadedSize() int64 {
-	return 0
+	var downloadedSize int64
+	for k, v := range torrent.Pieces {
+		if v.done {
+			downloadedSize += int64(torrent.getPieceLength(k))
+		}
+	}
+	return downloadedSize
 }
 
 func (torrent *Torrent) getTotalSize() int64 {
@@ -169,10 +220,12 @@ func (torrent *Torrent) parsePeers(peers interface{}) {
 	switch peers.(type) {
 	case string:
 		buf := bytes.NewBufferString(peers.(string))
-		for buf.Len() != 0 {
+		ipBuf := make([]byte, 4)
+		for buf.Len() >= 6 {
 			// 4 bytes ip
 			peer := NewPeer(torrent)
-			binary.Read(buf, binary.BigEndian, &peer.IP)
+			buf.Read(ipBuf)
+			peer.IP = net.IPv4(ipBuf[0], ipBuf[1], ipBuf[2], ipBuf[3])
 			binary.Read(buf, binary.BigEndian, &peer.Port)
 			torrent.Peers = append(torrent.Peers, peer)
 		}
