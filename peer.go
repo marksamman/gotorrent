@@ -30,7 +30,6 @@ import (
 	"log"
 	"math"
 	"net"
-	"sort"
 )
 
 const (
@@ -57,28 +56,22 @@ type Peer struct {
 	remoteChoked     bool
 	remoteInterested bool
 	localInterested  bool
+
+	requestPieceChannel chan uint32
+	done                chan struct{}
 }
 
 type PeerPiece struct {
-	blocks    []PieceBlock
-	reqBlocks int
+	index     uint32
+	data      []byte
+	writes    int
+	reqWrites int
 }
 
-type PieceBlock struct {
-	begin uint32
-	data  []byte
-}
-
-func (piece *PeerPiece) Len() int {
-	return len(piece.blocks)
-}
-
-func (piece *PeerPiece) Swap(i, j int) {
-	piece.blocks[i], piece.blocks[j] = piece.blocks[j], piece.blocks[i]
-}
-
-func (piece *PeerPiece) Less(i, j int) bool {
-	return piece.blocks[i].begin < piece.blocks[j].begin
+type Packet struct {
+	length      uint32
+	messageType int
+	payload     []byte
 }
 
 func NewPeer(torrent *Torrent) Peer {
@@ -88,10 +81,9 @@ func NewPeer(torrent *Torrent) Peer {
 	peer.remoteChoked = true
 	peer.remoteInterested = false
 	peer.localInterested = false
-	peer.pieces = make([]PeerPiece, torrent.getPieceCount())
-	for i := 0; i < len(peer.pieces); i++ {
-		peer.pieces[i].reqBlocks = int(math.Ceil(float64(torrent.getPieceLength(i)) / 16384))
-	}
+
+	peer.requestPieceChannel = make(chan uint32)
+	peer.done = make(chan struct{})
 	return peer
 }
 
@@ -143,112 +135,119 @@ func (peer *Peer) connect() {
 	// TODO: Validate peer id if provided by tracker
 
 	log.Printf("successfully exchanged handshake with peer: %s\n", addr)
+	packetChannel := make(chan Packet)
+	errorChannel := make(chan error)
+
+	go peer.receiver(packetChannel, errorChannel)
 	for {
-		err := peer.processMessage()
-		if err != nil {
-			log.Printf("failed to process message from peer %s: %s\n", addr, err)
+		select {
+		case pieceIndex := <-peer.requestPieceChannel:
+			peer.requestPiece(pieceIndex)
+		case packet := <-packetChannel:
+			if err := peer.processMessage(&packet); err != nil {
+				log.Printf("error while processing message in peer %s: %s", addr, err)
+				return
+			}
+		case err := <-errorChannel:
+			log.Printf("error in peer %s: %s", addr, err)
+			return
+		case <-peer.done:
 			return
 		}
 	}
 }
 
-func (peer *Peer) processMessage() error {
-	lengthHeader, err := peer.readN(4)
-	if err != nil {
-		return err
-	}
+func (peer *Peer) receiver(packetChannel chan Packet, errorChannel chan error) {
+	for {
+		lengthHeader, err := peer.readN(4)
+		if err != nil {
+			errorChannel <- err
+			return
+		}
 
-	var length uint32
-	binary.Read(bytes.NewBuffer(lengthHeader), binary.BigEndian, &length)
-	if length == 0 {
-		// keep-alive
-		return nil
-	}
+		var length uint32
+		binary.Read(bytes.NewBuffer(lengthHeader), binary.BigEndian, &length)
+		if length == 0 {
+			// keep-alive
+			continue
+		}
 
-	data, err := peer.readN(int(length))
-	if err != nil {
-		return err
-	}
+		data, err := peer.readN(int(length))
+		if err != nil {
+			errorChannel <- err
+			continue
+		}
 
-	switch data[0] {
+		packetChannel <- Packet{length, int(data[0]), data[1:]}
+	}
+}
+
+func (peer *Peer) processMessage(packet *Packet) error {
+	switch packet.messageType {
 	case Choke:
-		if length != 1 {
+		if packet.length != 1 {
 			return errors.New("length of choke packet must be 1")
 		}
 
 		peer.remoteChoked = true
 	case Unchoke:
-		if length != 1 {
+		if packet.length != 1 {
 			return errors.New("length of unchoke packet must be 1")
 		}
 
 		peer.remoteChoked = false
 	case Interested:
-		if length != 1 {
+		if packet.length != 1 {
 			return errors.New("length of interested packet must be 1")
 		}
 
 		peer.remoteInterested = true
 		// TODO: Unchoke peer and send files
 	case Uninterested:
-		if length != 1 {
+		if packet.length != 1 {
 			return errors.New("length of not interested packet must be 1")
 		}
 
 		peer.remoteInterested = false
 	case Have:
-		if length != 5 {
+		if packet.length != 5 {
 			return errors.New("length of have packet must be 5")
 		}
 
 		var index uint32
-		binary.Read(bytes.NewBuffer(data[1:]), binary.BigEndian, &index)
+		binary.Read(bytes.NewBuffer(packet.payload), binary.BigEndian, &index)
+		// TODO: update bitfield
 
-		// Ask Torrent if we want this piece
-		peer.torrent.checkInterest <- index
-		if <-peer.torrent.interestResponse {
-			peer.sendInterested()
-			peer.requestPiece(index)
-		} else {
-			peer.sendUninterested()
-		}
 	case Bitfield:
-		if length < 6 {
+		if packet.length < 6 {
 			return errors.New("length of bitfield packet must be at least 6")
 		}
 
-		buf := bytes.NewBuffer(data[1:])
+		buf := bytes.NewBuffer(packet.payload)
 		var index uint32
 		for buf.Len() != 0 {
-			var b byte
-			if b, err = buf.ReadByte(); err != nil {
+			if b, err := buf.ReadByte(); err != nil {
 				return err
-			}
-
-			for i := 128; i != 0; i >>= 1 {
-				if b&byte(i) != byte(i) {
+			} else {
+				for i := 128; i != 0; i >>= 1 {
+					if b&byte(i) != byte(i) {
+						index++
+						continue
+					}
 					index++
-					continue
 				}
-
-				// Ask Torrent if we want this piece
-				peer.torrent.checkInterest <- index
-				if <-peer.torrent.interestResponse {
-					peer.sendInterested()
-					peer.requestPiece(index)
-				} else {
-					peer.sendUninterested()
-				}
-				index++
 			}
 		}
 
+		// TODO: set bitfield
+		peer.requestPiece(0)
+
 	case Request:
-		if length != 13 {
+		if packet.length != 13 {
 			return errors.New("length of request packet must be 13")
 		}
 
-		buf := bytes.NewBuffer(data[1:])
+		buf := bytes.NewBuffer(packet.payload)
 		var index, begin, length uint32
 		binary.Read(buf, binary.BigEndian, &index)
 		binary.Read(buf, binary.BigEndian, &begin)
@@ -258,51 +257,62 @@ func (peer *Peer) processMessage() error {
 		}
 
 	case Piece:
-		if length < 10 {
+		if packet.length < 10 {
 			return errors.New("length of piece packet must be at least 10")
 		}
 
-		buf := bytes.NewBuffer(data[1:])
-		var index uint32
-		pieceBlock := PieceBlock{}
-		binary.Read(buf, binary.BigEndian, &index)
-		binary.Read(buf, binary.BigEndian, &pieceBlock.begin)
-		pieceBlock.data = data[9:]
+		var index, begin uint32
 
-		peer.pieces[index].blocks = append(peer.pieces[index].blocks, pieceBlock)
-		if len(peer.pieces[index].blocks) == peer.pieces[index].reqBlocks {
-			var pieceBuffer bytes.Buffer
-			sort.Sort(&peer.pieces[index])
-			for _, v := range peer.pieces[index].blocks {
-				pieceBuffer.Write(v.data)
-			}
-			peer.torrent.pieceChannel <- FilePiece{index, pieceBuffer.Bytes()}
+		buf := bytes.NewBuffer(packet.payload)
+		binary.Read(buf, binary.BigEndian, &index)
+
+		piece, idx := peer.getPeerPiece(index)
+		if piece == nil {
+			return errors.New("received index we didn't ask for")
+		}
+
+		binary.Read(buf, binary.BigEndian, &begin)
+
+		if int(begin+packet.length-9) > len(piece.data) {
+			return errors.New("begin+length exceeds length of data buffer")
+		}
+
+		copy(piece.data[begin:], packet.payload[8:])
+		piece.writes++
+		if piece.writes == piece.reqWrites {
+			peer.torrent.pieceChannel <- FilePiece{peer, index, piece.data}
+			peer.pieces = append(peer.pieces[:idx], peer.pieces[idx+1:]...)
 		}
 
 	case Cancel:
-		if length != 13 {
+		if packet.length != 13 {
 			return errors.New("length of cancel packet must be 13")
 		}
 
-		buf := bytes.NewBuffer(data[1:])
+		buf := bytes.NewBuffer(packet.payload)
 		var index, begin, length uint32
 		binary.Read(buf, binary.BigEndian, &index)
 		binary.Read(buf, binary.BigEndian, &begin)
 		binary.Read(buf, binary.BigEndian, &length)
+		// TODO: handle cancel
 
 	case Port:
-		if length != 3 {
+		if packet.length != 3 {
 			return errors.New("length of port packet must be 3")
 		}
 
 		var port uint16
-		binary.Read(bytes.NewBuffer(data[1:]), binary.BigEndian, &port)
+		binary.Read(bytes.NewBuffer(packet.payload), binary.BigEndian, &port)
 		// Peer has a DHT node on port
 	}
 	return nil
 }
 
 func (peer *Peer) sendInterested() {
+	if peer.localInterested {
+		return
+	}
+
 	peer.connection.Write([]byte{0, 0, 0, 1, Interested})
 	peer.localInterested = true
 }
@@ -322,8 +332,22 @@ func (peer *Peer) sendRequest(index, begin, length uint32) {
 	peer.connection.Write(packet.Bytes())
 }
 
+func (peer *Peer) getPeerPiece(index uint32) (*PeerPiece, int) {
+	for k, v := range peer.pieces {
+		if v.index == index {
+			return &v, k
+		}
+	}
+	return nil, -1
+}
+
 func (peer *Peer) requestPiece(index uint32) {
+	peer.sendInterested()
+
 	pieceLength := peer.torrent.getPieceLength(int(index))
+
+	peer.pieces = append(peer.pieces, PeerPiece{index, make([]byte, pieceLength), 0, int(math.Ceil(float64(pieceLength) / 16384))})
+
 	var pos uint32
 	for pieceLength > 16384 {
 		peer.sendRequest(index, pos, 16384)

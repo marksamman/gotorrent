@@ -53,6 +53,7 @@ type TorrentPiece struct {
 }
 
 type FilePiece struct {
+	from  *Peer
 	index uint32
 	data  []byte
 }
@@ -105,8 +106,8 @@ func (torrent *Torrent) download() {
 		select {
 		case piece := <-torrent.pieceChannel:
 			if !torrent.checkPieceHash(&piece) {
-				// TODO: Disconnect the peer that sent us the piece
 				torrent.Pieces[piece.index].busy = false
+				close(piece.from.done)
 				break
 			}
 
@@ -126,6 +127,14 @@ func (torrent *Torrent) download() {
 			fmt.Printf("Downloaded: %.2f%c\n", float64(doneCount)*100/float64(len(torrent.Pieces)), '%')
 			if doneCount == len(torrent.Pieces) {
 				return
+			}
+
+			for k, v := range torrent.Pieces {
+				if !v.busy {
+					torrent.Pieces[k].busy = true
+					piece.from.requestPieceChannel <- uint32(k)
+					break
+				}
 			}
 
 		case pieceIndex := <-torrent.checkInterest:
