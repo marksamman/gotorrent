@@ -220,17 +220,13 @@ func (peer *Peer) processMessage(packet *Packet) error {
 
 		var index uint32
 		binary.Read(bytes.NewBuffer(packet.payload), binary.BigEndian, &index)
-		go func() {
-			peer.torrent.havePieceChannel <- HavePieceMessage{peer, index}
-		}()
+		peer.torrent.havePieceChannel <- HavePieceMessage{peer, index}
 
 	case Bitfield:
 		if packet.length < 2 {
 			return errors.New("length of bitfield packet must be at least 2")
 		}
-		go func() {
-			peer.torrent.bitfieldChannel <- BitfieldMessage{peer, packet.payload}
-		}()
+		peer.torrent.bitfieldChannel <- BitfieldMessage{peer, packet.payload}
 
 	case Request:
 		if packet.length != 13 {
