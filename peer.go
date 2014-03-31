@@ -190,19 +190,16 @@ func (peer *Peer) processMessage(packet *Packet) error {
 			return errors.New("length of choke packet must be 1")
 		}
 
-		fmt.Println("we have been choked")
 		peer.remoteChoked = true
 	case Unchoke:
 		if packet.length != 1 {
 			return errors.New("length of unchoke packet must be 1")
 		}
 
-		fmt.Println("we have been unchoked")
 		peer.remoteChoked = false
 		for _, piece := range peer.pieces {
 			peer.requestPiece(&piece)
 		}
-
 	case Interested:
 		if packet.length != 1 {
 			return errors.New("length of interested packet must be 1")

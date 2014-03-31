@@ -329,9 +329,20 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 
 		// TODO: Graceful shutdown
 		os.Exit(0)
+	} else if doneCount == len(torrent.pieces)-8 {
+		// End game
+		for k, v := range torrent.pieces {
+			if !v.done {
+				for _, peer := range v.peers {
+					go func(idx int, p *Peer) {
+						p.requestPieceChannel <- uint32(idx)
+					}(k, peer)
+				}
+			}
+		}
+	} else {
+		torrent.requestPieceFromPeer(pieceMessage.from)
 	}
-
-	torrent.requestPieceFromPeer(pieceMessage.from)
 }
 
 func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
