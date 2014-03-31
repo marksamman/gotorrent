@@ -35,12 +35,13 @@ import (
 )
 
 type Torrent struct {
-	data      map[string]interface{}
-	infoHash  []byte
-	peers     []Peer
-	handshake []byte
-	files     []File
-	pieces    []TorrentPiece
+	data            map[string]interface{}
+	infoHash        []byte
+	peers           []Peer
+	handshake       []byte
+	files           []File
+	pieces          []TorrentPiece
+	completedPieces int
 
 	pieceChannel     chan PieceMessage
 	bitfieldChannel  chan BitfieldMessage
@@ -222,8 +223,8 @@ func (torrent *Torrent) getPieceLength(pieceIndex int) int {
 
 func (torrent *Torrent) getDownloadedSize() int64 {
 	var downloadedSize int64
-	for k, v := range torrent.pieces {
-		if v.done {
+	for k := range torrent.pieces {
+		if torrent.pieces[k].done {
 			downloadedSize += int64(torrent.getPieceLength(k))
 		}
 	}
@@ -232,8 +233,8 @@ func (torrent *Torrent) getDownloadedSize() int64 {
 
 func (torrent *Torrent) getTotalSize() int64 {
 	var size int64
-	for _, v := range torrent.files {
-		size += v.length
+	for k := range torrent.files {
+		size += torrent.files[k].length
 	}
 	return size
 }
@@ -299,41 +300,37 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 	}
 
 	torrent.pieces[pieceMessage.index].done = true
+	torrent.completedPieces++
 
 	beginPos := int64(pieceMessage.index) * int64(torrent.getPieceLength(0))
-	for _, file := range torrent.files {
+	for k := range torrent.files {
+		file := &torrent.files[k]
 		if beginPos >= file.begin && beginPos < file.begin+file.length {
 			offsetWrite := beginPos - file.begin
 			amountWrite := (file.begin + file.length) - beginPos
 			if amountWrite > int64(len(pieceMessage.data)) {
 				amountWrite = int64(len(pieceMessage.data))
 			}
+
 			file.handle.Seek(offsetWrite, 0)
 			file.handle.Write(pieceMessage.data[:amountWrite])
 			pieceMessage.data = pieceMessage.data[amountWrite:]
 		}
 	}
 
-	doneCount := 0
-	for _, v := range torrent.pieces {
-		if v.done {
-			doneCount++
-		}
-	}
-
-	fmt.Printf("Downloaded: %.2f%c\n", float64(doneCount)*100/float64(len(torrent.pieces)), '%')
-	if doneCount == len(torrent.pieces) {
-		for _, file := range torrent.files {
-			file.handle.Close()
+	fmt.Printf("Downloaded: %.2f%c\n", float64(torrent.completedPieces)*100/float64(len(torrent.pieces)), '%')
+	if torrent.completedPieces == len(torrent.pieces) {
+		for k := range torrent.files {
+			torrent.files[k].handle.Close()
 		}
 
 		// TODO: Graceful shutdown
 		os.Exit(0)
-	} else if doneCount == len(torrent.pieces)-8 {
+	} else if torrent.completedPieces == len(torrent.pieces)-8 {
 		// End game
-		for k, v := range torrent.pieces {
-			if !v.done {
-				for _, peer := range v.peers {
+		for k := range torrent.pieces {
+			if !torrent.pieces[k].done {
+				for _, peer := range torrent.pieces[k].peers {
 					go func(idx int, p *Peer) {
 						p.requestPieceChannel <- uint32(idx)
 					}(k, peer)
@@ -346,8 +343,8 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 }
 
 func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
-	for k, v := range torrent.pieces {
-		if !v.busy {
+	for k := range torrent.pieces {
+		if !torrent.pieces[k].busy {
 			torrent.pieces[k].busy = true
 			go func() {
 				peer.requestPieceChannel <- uint32(k)

@@ -197,8 +197,8 @@ func (peer *Peer) processMessage(packet *Packet) error {
 		}
 
 		peer.remoteChoked = false
-		for _, piece := range peer.pieces {
-			peer.requestPiece(&piece)
+		for k := range peer.pieces {
+			peer.requestPiece(&peer.pieces[k])
 		}
 	case Interested:
 		if packet.length != 1 {
@@ -268,10 +268,9 @@ func (peer *Peer) processMessage(packet *Packet) error {
 		}
 
 		copy(piece.data[begin:], packet.payload[8:])
-		peer.pieces[idx].writes++
+		piece.writes++
 
-		// fmt.Printf("piece %d: %d/%d\n", index, peer.pieces[idx].writes, piece.reqWrites)
-		if peer.pieces[idx].writes == piece.reqWrites {
+		if piece.writes == piece.reqWrites {
 			// Send piece to Torrent
 			peer.torrent.pieceChannel <- PieceMessage{peer, index, piece.data}
 
@@ -328,9 +327,9 @@ func (peer *Peer) sendRequest(index, begin, length uint32) {
 }
 
 func (peer *Peer) getPeerPiece(index uint32) (*PeerPiece, int) {
-	for k, v := range peer.pieces {
-		if v.index == index {
-			return &v, k
+	for k := range peer.pieces {
+		if peer.pieces[k].index == index {
+			return &peer.pieces[k], k
 		}
 	}
 	return nil, -1
