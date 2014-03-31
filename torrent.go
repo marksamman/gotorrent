@@ -323,6 +323,7 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 			if amountWrite > int64(len(pieceMessage.data)) {
 				amountWrite = int64(len(pieceMessage.data))
 			}
+			beginPos += amountWrite
 
 			file.handle.Seek(offsetWrite, 0)
 			file.handle.Write(pieceMessage.data[:amountWrite])
