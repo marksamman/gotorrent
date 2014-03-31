@@ -1,23 +1,23 @@
 /*
-* Copyright (c) 2014 Mark Samman <https://github.com/marksamman/gotorrent>
-*
-* Permission is hereby granted, free of charge, to any person obtaining a copy
-* of this software and associated documentation files (the "Software"), to deal
-* in the Software without restriction, including without limitation the rights
-* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-* copies of the Software, and to permit persons to whom the Software is
-* furnished to do so, subject to the following conditions:
-*
-* The above copyright notice and this permission notice shall be included in
-* all copies or substantial portions of the Software.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-* THE SOFTWARE.
+ * Copyright (c) 2014 Mark Samman <https://github.com/marksamman/gotorrent>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
  */
 
 package main
@@ -38,7 +38,7 @@ import (
 type Torrent struct {
 	data            map[string]interface{}
 	infoHash        []byte
-	peers           []Peer
+	peers           []*Peer
 	handshake       []byte
 	files           []File
 	pieces          []TorrentPiece
@@ -160,7 +160,7 @@ func (torrent *Torrent) download() {
 	torrent.havePieceChannel = make(chan HavePieceMessage)
 
 	for _, peer := range torrent.peers {
-		go func(peer Peer) {
+		go func(peer *Peer) {
 			peer.connect()
 		}(peer)
 	}
@@ -257,11 +257,15 @@ func (torrent *Torrent) parsePeers(peers interface{}) {
 		buf := bytes.NewBufferString(peers.(string))
 		ipBuf := make([]byte, 4)
 		for buf.Len() >= 6 {
-			// 4 bytes ip
 			peer := NewPeer(torrent)
+
+			// 4 bytes IPv4-address
 			buf.Read(ipBuf)
 			peer.ip = net.IPv4(ipBuf[0], ipBuf[1], ipBuf[2], ipBuf[3])
+
+			// 2 bytes port
 			binary.Read(buf, binary.BigEndian, &peer.port)
+
 			torrent.peers = append(torrent.peers, peer)
 		}
 	case map[string]interface{}:
