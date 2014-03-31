@@ -32,6 +32,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 )
 
 type Torrent struct {
@@ -115,7 +116,24 @@ func (torrent *Torrent) open(filename string) error {
 		for _, v := range files {
 			v := v.(map[string]interface{})
 
-			file, err := os.Create(v["path"].([]interface{})[0].(string))
+			// Set up directory structure
+			pathList := v["path"].([]interface{})
+			pathElements := []string{}
+			for i := 0; i < len(pathList)-1; i++ {
+				pathElements = append(pathElements, pathList[i].(string))
+			}
+
+			path := strings.Join(pathElements, "/")
+			if len(path) != 0 {
+				path += "/"
+				err := os.MkdirAll(path, 0700)
+				if err != nil {
+					fmt.Printf("%s\n", path)
+					log.Fatal(err)
+				}
+			}
+
+			file, err := os.Create(path + pathList[len(pathList)-1].(string))
 			if err != nil {
 				return err
 			}
@@ -137,12 +155,6 @@ func (torrent *Torrent) open(filename string) error {
 }
 
 func (torrent *Torrent) download() {
-	file, err := os.Create(torrent.getInfo()["name"].(string))
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
 	torrent.pieceChannel = make(chan PieceMessage)
 	torrent.bitfieldChannel = make(chan BitfieldMessage)
 	torrent.havePieceChannel = make(chan HavePieceMessage)
