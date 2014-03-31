@@ -35,27 +35,45 @@ import (
 )
 
 type Torrent struct {
-	Data      map[string]interface{}
-	InfoHash  []byte
-	Peers     []Peer
-	Handshake []byte
-	Pieces    []TorrentPiece
+	data      map[string]interface{}
+	infoHash  []byte
+	peers     []Peer
+	handshake []byte
+	files     []File
+	pieces    []TorrentPiece
 
-	checkInterest    chan uint32
-	interestResponse chan bool
-	pieceChannel     chan FilePiece
+	pieceChannel     chan PieceMessage
+	bitfieldChannel  chan BitfieldMessage
+	havePieceChannel chan HavePieceMessage
 }
 
 type TorrentPiece struct {
-	hash string
-	busy bool
-	done bool
+	peers []*Peer
+	hash  string
+	busy  bool
+	done  bool
 }
 
-type FilePiece struct {
+type File struct {
+	handle *os.File
+	begin  int64
+	length int64
+}
+
+type PieceMessage struct {
 	from  *Peer
 	index uint32
 	data  []byte
+}
+
+type BitfieldMessage struct {
+	from *Peer
+	data []byte
+}
+
+type HavePieceMessage struct {
+	from  *Peer
+	index uint32
 }
 
 func (torrent *Torrent) open(filename string) error {
@@ -63,26 +81,57 @@ func (torrent *Torrent) open(filename string) error {
 	if err != nil {
 		return err
 	}
-	torrent.Data = BencodeDecode(file)
+	torrent.data = BencodeDecode(file)
 	file.Close()
 
-	hasher := sha1.New()
-	hasher.Write(BencodeEncode(torrent.getInfo()))
-	torrent.InfoHash = hasher.Sum(nil)
+	info := torrent.getInfo()
 
+	// Set info hash
+	hasher := sha1.New()
+	hasher.Write(BencodeEncode(info))
+	torrent.infoHash = hasher.Sum(nil)
+
+	// Set handshake
 	var buffer bytes.Buffer
 	buffer.WriteByte(19) // length of the string "BitTorrent Protocol"
 	buffer.WriteString("BitTorrent protocol")
 	buffer.WriteString("\x00\x00\x00\x00\x00\x00\x00\x00") // reserved
-	buffer.Write(torrent.InfoHash)
-	buffer.Write(client.PeerId)
-	torrent.Handshake = buffer.Bytes()
+	buffer.Write(torrent.infoHash)
+	buffer.Write(client.peerId)
+	torrent.handshake = buffer.Bytes()
 
-	pieces := torrent.getInfo()["pieces"].(string)
+	// Set pieces
+	pieces := info["pieces"].(string)
 	for i := 0; i < len(pieces); i += 20 {
-		torrent.Pieces = append(torrent.Pieces, TorrentPiece{pieces[i : i+20], false, false})
+		torrent.pieces = append(torrent.pieces, TorrentPiece{[]*Peer{}, pieces[i : i+20], false, false})
 	}
 
+	// Set files
+	files, exists := info["files"].([]interface{})
+	if exists {
+		// Multiple files
+		var begin int64
+		for _, v := range files {
+			v := v.(map[string]interface{})
+
+			file, err := os.Create(v["path"].([]interface{})[0].(string))
+			if err != nil {
+				return err
+			}
+
+			length := int64(v["length"].(int))
+			torrent.files = append(torrent.files, File{file, begin, length})
+			begin += length
+		}
+	} else {
+		// Single file
+		file, err := os.Create(info["name"].(string))
+		if err != nil {
+			return err
+		}
+
+		torrent.files = []File{{file, 0, int64(info["length"].(int))}}
+	}
 	return nil
 }
 
@@ -93,10 +142,11 @@ func (torrent *Torrent) download() {
 	}
 	defer file.Close()
 
-	torrent.pieceChannel = make(chan FilePiece)
-	torrent.checkInterest = make(chan uint32)
-	torrent.interestResponse = make(chan bool)
-	for _, peer := range torrent.Peers {
+	torrent.pieceChannel = make(chan PieceMessage)
+	torrent.bitfieldChannel = make(chan BitfieldMessage)
+	torrent.havePieceChannel = make(chan HavePieceMessage)
+
+	for _, peer := range torrent.peers {
 		go func(peer Peer) {
 			peer.connect()
 		}(peer)
@@ -104,59 +154,22 @@ func (torrent *Torrent) download() {
 
 	for {
 		select {
-		case piece := <-torrent.pieceChannel:
-			if !torrent.checkPieceHash(&piece) {
-				torrent.Pieces[piece.index].busy = false
-				close(piece.from.done)
-				break
-			}
+		case havePieceMessage := <-torrent.havePieceChannel:
+			torrent.handleHaveMessage(&havePieceMessage)
 
-			torrent.Pieces[piece.index].done = true
+		case bitfieldMessage := <-torrent.bitfieldChannel:
+			torrent.handleBitfieldMessage(&bitfieldMessage)
 
-			file.Seek(int64(piece.index)*int64(torrent.getPieceLength(0)), 0)
-			file.Write(piece.data)
-			file.Sync()
-
-			doneCount := 0
-			for _, v := range torrent.Pieces {
-				if v.done {
-					doneCount++
-				}
-			}
-
-			fmt.Printf("Downloaded: %.2f%c\n", float64(doneCount)*100/float64(len(torrent.Pieces)), '%')
-			if doneCount == len(torrent.Pieces) {
-				return
-			}
-
-			for k, v := range torrent.Pieces {
-				if !v.busy {
-					torrent.Pieces[k].busy = true
-					piece.from.requestPieceChannel <- uint32(k)
-					break
-				}
-			}
-
-		case pieceIndex := <-torrent.checkInterest:
-			if pieceIndex >= uint32(len(torrent.Pieces)) {
-				torrent.interestResponse <- false
-				break
-			}
-
-			if torrent.Pieces[pieceIndex].busy {
-				torrent.interestResponse <- false
-			} else {
-				torrent.interestResponse <- true
-				torrent.Pieces[pieceIndex].busy = true
-			}
+		case pieceMessage := <-torrent.pieceChannel:
+			torrent.handlePieceMessage(&pieceMessage)
 		}
 	}
 }
 
-func (torrent *Torrent) checkPieceHash(piece *FilePiece) bool {
+func (torrent *Torrent) checkPieceHash(pieceMessage *PieceMessage) bool {
 	hasher := sha1.New()
-	hasher.Write(piece.data)
-	return bytes.Equal(hasher.Sum(nil), []byte(torrent.Pieces[piece.index].hash))
+	hasher.Write(pieceMessage.data)
+	return bytes.Equal(hasher.Sum(nil), []byte(torrent.pieces[pieceMessage.index].hash))
 }
 
 func (torrent *Torrent) sendTrackerRequest(params map[string]string) (*http.Response, error) {
@@ -170,13 +183,13 @@ func (torrent *Torrent) sendTrackerRequest(params map[string]string) (*http.Resp
 	return http.Get(
 		fmt.Sprintf("%s?%speer_id=%s&info_hash=%s&left=%d&compact=1",
 			torrent.getAnnounceURL(), paramBuf.String(),
-			url.QueryEscape(string(client.PeerId)),
-			url.QueryEscape(string(torrent.InfoHash)),
+			url.QueryEscape(string(client.peerId)),
+			url.QueryEscape(string(torrent.infoHash)),
 			torrent.getTotalSize()-torrent.getDownloadedSize()))
 }
 
 func (torrent *Torrent) getAnnounceURL() string {
-	return torrent.Data["announce"].(string)
+	return torrent.data["announce"].(string)
 }
 
 func (torrent *Torrent) getName() string {
@@ -184,11 +197,11 @@ func (torrent *Torrent) getName() string {
 }
 
 func (torrent *Torrent) getInfo() map[string]interface{} {
-	return torrent.Data["info"].(map[string]interface{})
+	return torrent.data["info"].(map[string]interface{})
 }
 
 func (torrent *Torrent) getComment() string {
-	comment, exists := torrent.Data["comment"]
+	comment, exists := torrent.data["comment"]
 	if !exists {
 		return ""
 	}
@@ -196,12 +209,12 @@ func (torrent *Torrent) getComment() string {
 }
 
 func (torrent *Torrent) getPieceCount() int {
-	return len(torrent.Pieces)
+	return len(torrent.pieces)
 }
 
 func (torrent *Torrent) getPieceLength(pieceIndex int) int {
 	pieceLength := torrent.getInfo()["piece length"].(int)
-	if pieceIndex == len(torrent.Pieces)-1 {
+	if pieceIndex == len(torrent.pieces)-1 {
 		return int(torrent.getTotalSize() % int64(pieceLength))
 	}
 	return pieceLength
@@ -209,7 +222,7 @@ func (torrent *Torrent) getPieceLength(pieceIndex int) int {
 
 func (torrent *Torrent) getDownloadedSize() int64 {
 	var downloadedSize int64
-	for k, v := range torrent.Pieces {
+	for k, v := range torrent.pieces {
 		if v.done {
 			downloadedSize += int64(torrent.getPieceLength(k))
 		}
@@ -218,19 +231,11 @@ func (torrent *Torrent) getDownloadedSize() int64 {
 }
 
 func (torrent *Torrent) getTotalSize() int64 {
-	info := torrent.getInfo()
-	length, exists := info["length"]
-	if !exists {
-		// Multiple files
-		var size int64
-		for _, v := range info["files"].([]interface{}) {
-			size += int64(v.(map[string]interface{})["length"].(int))
-		}
-		return size
+	var size int64
+	for _, v := range torrent.files {
+		size += v.length
 	}
-
-	// Single file
-	return int64(length.(int))
+	return size
 }
 
 func (torrent *Torrent) parsePeers(peers interface{}) {
@@ -242,14 +247,101 @@ func (torrent *Torrent) parsePeers(peers interface{}) {
 			// 4 bytes ip
 			peer := NewPeer(torrent)
 			buf.Read(ipBuf)
-			peer.IP = net.IPv4(ipBuf[0], ipBuf[1], ipBuf[2], ipBuf[3])
-			binary.Read(buf, binary.BigEndian, &peer.Port)
-			torrent.Peers = append(torrent.Peers, peer)
+			peer.ip = net.IPv4(ipBuf[0], ipBuf[1], ipBuf[2], ipBuf[3])
+			binary.Read(buf, binary.BigEndian, &peer.port)
+			torrent.peers = append(torrent.peers, peer)
 		}
 	case map[string]interface{}:
 		// TODO: dict model
 		// peer_id: string
 		// ip: hexed ipv6, dotted quad ipv4, dns name string
 		// port: int
+	}
+}
+
+func (torrent *Torrent) handleHaveMessage(havePieceMessage *HavePieceMessage) {
+	index := havePieceMessage.index
+	torrent.pieces[index].peers = append(torrent.pieces[index].peers, havePieceMessage.from)
+
+	// torrent.requestPieceFromPeer(havePieceMessage.from)
+}
+
+func (torrent *Torrent) handleBitfieldMessage(bitfieldMessage *BitfieldMessage) {
+	index := -1
+	for i := 0; i < len(bitfieldMessage.data); i++ {
+		b := bitfieldMessage.data[i]
+		for v := byte(128); v != 0; v >>= 1 {
+			index++
+			if b&v != v {
+				continue
+			}
+
+			if index >= len(torrent.pieces) {
+				break
+			}
+
+			torrent.pieces[index].peers = append(torrent.pieces[index].peers, bitfieldMessage.from)
+		}
+	}
+
+	torrent.requestPieceFromPeer(bitfieldMessage.from)
+}
+
+func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
+	if torrent.pieces[pieceMessage.index].done {
+		return
+	}
+
+	if !torrent.checkPieceHash(pieceMessage) {
+		torrent.pieces[pieceMessage.index].busy = false
+		close(pieceMessage.from.done)
+		return
+	}
+
+	torrent.pieces[pieceMessage.index].done = true
+
+	beginPos := int64(pieceMessage.index) * int64(torrent.getPieceLength(0))
+	for _, file := range torrent.files {
+		if beginPos >= file.begin && beginPos < file.begin+file.length {
+			offsetWrite := beginPos - file.begin
+			amountWrite := (file.begin + file.length) - beginPos
+			if amountWrite > int64(len(pieceMessage.data)) {
+				amountWrite = int64(len(pieceMessage.data))
+			}
+			file.handle.Seek(offsetWrite, 0)
+			file.handle.Write(pieceMessage.data[:amountWrite])
+			pieceMessage.data = pieceMessage.data[amountWrite:]
+		}
+	}
+
+	doneCount := 0
+	for _, v := range torrent.pieces {
+		if v.done {
+			doneCount++
+		}
+	}
+
+	fmt.Printf("Downloaded: %.2f%c\n", float64(doneCount)*100/float64(len(torrent.pieces)), '%')
+	if doneCount == len(torrent.pieces) {
+		for _, file := range torrent.files {
+			file.handle.Close()
+		}
+
+		// TODO: Graceful shutdown
+		os.Exit(0)
+	}
+
+	torrent.requestPieceFromPeer(pieceMessage.from)
+}
+
+func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
+	for k, v := range torrent.pieces {
+		if !v.busy {
+			torrent.pieces[k].busy = true
+			go func() {
+				peer.requestPieceChannel <- uint32(k)
+			}()
+			break
+		}
 	}
 }
