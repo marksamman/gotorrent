@@ -24,8 +24,8 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"io"
-	"log"
 	"strconv"
 )
 
@@ -33,112 +33,126 @@ type BencodeDecoder struct {
 	bufio.Reader
 }
 
-func (decoder *BencodeDecoder) readIntUntil(until byte) int {
+func (decoder *BencodeDecoder) readIntUntil(until byte) (int, error) {
 	res, err := decoder.ReadSlice(until)
 	if err != nil {
-		log.Fatal(err)
+		return -1, err
 	}
 
 	value, err := strconv.Atoi(string(res[:len(res)-1]))
 	if err != nil {
-		log.Fatal(err)
+		return -1, err
 	}
-	return value
+	return value, nil
 }
 
-func (decoder *BencodeDecoder) readInt() int {
+func (decoder *BencodeDecoder) readInt() (int, error) {
 	return decoder.readIntUntil('e')
 }
 
-func (decoder *BencodeDecoder) readList() []interface{} {
+func (decoder *BencodeDecoder) readList() ([]interface{}, error) {
 	var list []interface{}
 	for {
 		ch, err := decoder.ReadByte()
 		if err != nil {
-			log.Fatal(err)
+			return nil, err
 		}
 
+		var item interface{}
 		switch ch {
 		case 'i':
-			list = append(list, decoder.readInt())
+			item, err = decoder.readInt()
 		case 'l':
-			list = append(list, decoder.readList())
+			item, err = decoder.readList()
 		case 'd':
-			list = append(list, decoder.readDictionary())
+			item, err = decoder.readDictionary()
 		case 'e':
-			return list
+			return list, nil
 		default:
 			if err := decoder.UnreadByte(); err != nil {
-				log.Fatal(err)
+				return nil, err
 			}
-
-			list = append(list, decoder.readString())
+			item, err = decoder.readString()
 		}
+
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, item)
 	}
 }
 
-func (decoder *BencodeDecoder) readString() string {
-	len := decoder.readIntUntil(':')
+func (decoder *BencodeDecoder) readString() (string, error) {
+	len, err := decoder.readIntUntil(':')
+	if err != nil {
+		return "", err
+	}
 
 	stringBuffer := make([]byte, len)
 	for pos := 0; pos < len; {
 		if n, err := decoder.Read(stringBuffer[pos:]); err != nil {
-			log.Fatal(err)
+			return "", err
 		} else {
 			pos += n
 		}
 	}
-	return string(stringBuffer)
+	return string(stringBuffer), nil
 }
 
-func (decoder *BencodeDecoder) readDictionary() map[string]interface{} {
+func (decoder *BencodeDecoder) readDictionary() (map[string]interface{}, error) {
 	dict := make(map[string]interface{})
 	for {
-		key := decoder.readString()
+		key, err := decoder.readString()
+		if err != nil {
+			return nil, err
+		}
+
 		ch, err := decoder.ReadByte()
 		if err != nil {
-			log.Fatal(err)
+			return nil, err
 		}
 
+		var item interface{}
 		switch ch {
 		case 'i':
-			dict[key] = decoder.readInt()
+			item, err = decoder.readInt()
 		case 'l':
-			dict[key] = decoder.readList()
+			item, err = decoder.readList()
 		case 'd':
-			dict[key] = decoder.readDictionary()
+			item, err = decoder.readDictionary()
 		default:
-			err := decoder.UnreadByte()
-			if err != nil {
-				log.Fatal(err)
+			if err := decoder.UnreadByte(); err != nil {
+				return nil, err
 			}
-
-			dict[key] = decoder.readString()
+			item, err = decoder.readString()
 		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		dict[key] = item
 
 		nextByte, err := decoder.ReadByte()
 		if err != nil {
-			log.Fatal(err)
+			return nil, err
 		}
 
 		if nextByte == 'e' {
-			return dict
+			return dict, nil
 		} else if err := decoder.UnreadByte(); err != nil {
-			log.Fatal(err)
+			return nil, err
 		}
 	}
 }
 
-func BencodeDecode(reader io.Reader) map[string]interface{} {
+func BencodeDecode(reader io.Reader) (map[string]interface{}, error) {
 	decoder := BencodeDecoder{*bufio.NewReader(reader)}
 
-	firstByte, err := decoder.ReadByte()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	if firstByte != 'd' {
-		log.Fatal("torrent file must begin with a dictionary")
+	if firstByte, err := decoder.ReadByte(); err != nil {
+		return nil, err
+	} else if firstByte != 'd' {
+		return nil, errors.New("torrent file must begin with a dictionary")
 	}
 	return decoder.readDictionary()
 }

@@ -28,7 +28,6 @@ import (
 	"log"
 	"math/rand"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -57,35 +56,15 @@ func main() {
 
 	// Open torrent file
 	torrent := Torrent{}
-	err := torrent.open(os.Args[1])
-	if err != nil {
+	if err := torrent.open(os.Args[1]); err != nil {
 		log.Fatal(err)
 	}
-
-	// Start a TCP listener on a port in the range 6881-6889
-	port := 6881 + rand.Intn(8)
-	go TCPListener(port)
 
 	fmt.Println("Name:", torrent.getName())
 	fmt.Println("Announce URL:", torrent.getAnnounceURL())
 	fmt.Println("Comment:", torrent.getComment())
 	fmt.Printf("Total size: %.2f MB\n", float64(torrent.getTotalSize())/1024/1024)
-
-	params := make(map[string]string)
-	params["event"] = "started"
-	params["port"] = strconv.Itoa(port)
-
-	httpResponse, err := torrent.sendTrackerRequest(params)
-	if err != nil {
+	if err := torrent.download(); err != nil {
 		log.Fatal(err)
 	}
-	defer httpResponse.Body.Close()
-
-	if httpResponse.StatusCode != 200 {
-		log.Fatalf("bad response from tracker: %s", httpResponse.Status)
-	}
-
-	resp := BencodeDecode(httpResponse.Body)
-	torrent.parsePeers(resp["peers"])
-	torrent.download()
 }
