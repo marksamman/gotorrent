@@ -50,7 +50,6 @@ type Peer struct {
 	port    uint16
 	torrent *Torrent
 
-	handshake        []byte
 	pieces           []*PeerPiece
 	connection       net.Conn
 	remoteChoked     bool
