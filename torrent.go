@@ -214,7 +214,7 @@ func (torrent *Torrent) download() error {
 	defer httpResponse.Body.Close()
 
 	if httpResponse.StatusCode != 200 {
-		return errors.New(fmt.Sprintf("bad response from tracker: %s", httpResponse.Status))
+		return fmt.Errorf("bad response from tracker: %s", httpResponse.Status)
 	}
 
 	resp, err := BencodeDecode(httpResponse.Body)
