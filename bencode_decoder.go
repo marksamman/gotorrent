@@ -148,11 +148,10 @@ func (decoder *BencodeDecoder) readDictionary() (map[string]interface{}, error) 
 
 func BencodeDecode(reader io.Reader) (map[string]interface{}, error) {
 	decoder := BencodeDecoder{*bufio.NewReader(reader)}
-
 	if firstByte, err := decoder.ReadByte(); err != nil {
-		return nil, err
+		return make(map[string]interface{}), nil
 	} else if firstByte != 'd' {
-		return nil, errors.New("torrent file must begin with a dictionary")
+		return nil, errors.New("bencode data must begin with a dictionary")
 	}
 	return decoder.readDictionary()
 }
