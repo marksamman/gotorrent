@@ -99,7 +99,7 @@ func (torrent *Torrent) open(filename string) error {
 	buffer.WriteString("BitTorrent protocol")
 	buffer.WriteString("\x00\x00\x00\x00\x00\x00\x00\x00") // reserved
 	buffer.Write(torrent.infoHash)
-	buffer.Write(client.peerId)
+	buffer.Write(client.peerID)
 	torrent.handshake = buffer.Bytes()
 
 	// Set pieces
@@ -196,7 +196,7 @@ func (torrent *Torrent) sendTrackerRequest(params map[string]string) (*http.Resp
 	return http.Get(
 		fmt.Sprintf("%s?%speer_id=%s&info_hash=%s&left=%d&compact=1",
 			torrent.getAnnounceURL(), paramBuf.String(),
-			url.QueryEscape(string(client.peerId)),
+			url.QueryEscape(string(client.peerID)),
 			url.QueryEscape(string(torrent.infoHash)),
 			torrent.getTotalSize()-torrent.getDownloadedSize()))
 }

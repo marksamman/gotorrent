@@ -33,7 +33,7 @@ import (
 )
 
 type Client struct {
-	peerId []byte
+	peerID []byte
 }
 
 var client Client
@@ -48,12 +48,12 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 
 	// Generate a 20 byte peerId
-	var peerId bytes.Buffer
-	peerId.WriteString("-GO10000")
+	var peerID bytes.Buffer
+	peerID.WriteString("-GO10000")
 	for i := 0; i < 12; i++ {
-		peerId.WriteByte(byte(rand.Intn(255)))
+		peerID.WriteByte(byte(rand.Intn(255)))
 	}
-	client.peerId = peerId.Bytes()
+	client.peerID = peerID.Bytes()
 
 	// Open torrent file
 	torrent := Torrent{}

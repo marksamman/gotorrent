@@ -75,7 +75,6 @@ func (decoder *BencodeDecoder) readList() []interface{} {
 			list = append(list, decoder.readString())
 		}
 	}
-	return list
 }
 
 func (decoder *BencodeDecoder) readString() string {
@@ -128,7 +127,6 @@ func (decoder *BencodeDecoder) readDictionary() map[string]interface{} {
 			log.Fatal(err)
 		}
 	}
-	return dict
 }
 
 func BencodeDecode(reader io.Reader) map[string]interface{} {
