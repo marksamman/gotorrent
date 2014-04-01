@@ -51,7 +51,7 @@ type Peer struct {
 	torrent *Torrent
 
 	handshake        []byte
-	pieces           []PeerPiece
+	pieces           []*PeerPiece
 	connection       net.Conn
 	remoteChoked     bool
 	remoteInterested bool
@@ -197,8 +197,8 @@ func (peer *Peer) processMessage(packet *Packet) error {
 		}
 
 		peer.remoteChoked = false
-		for k := range peer.pieces {
-			peer.requestPiece(&peer.pieces[k])
+		for _, piece := range peer.pieces {
+			peer.requestPiece(piece)
 		}
 	case Interested:
 		if packet.length != 1 {
@@ -323,9 +323,9 @@ func (peer *Peer) sendRequest(index, begin, length uint32) {
 }
 
 func (peer *Peer) getPeerPiece(index uint32) (*PeerPiece, int) {
-	for k := range peer.pieces {
-		if peer.pieces[k].index == index {
-			return &peer.pieces[k], k
+	for idx, piece := range peer.pieces {
+		if piece.index == index {
+			return piece, idx
 		}
 	}
 	return nil, -1
@@ -335,9 +335,9 @@ func (peer *Peer) sendPieceRequest(index uint32) {
 	peer.sendInterested()
 
 	pieceLength := peer.torrent.getPieceLength(int(index))
-	peer.pieces = append(peer.pieces, PeerPiece{index, make([]byte, pieceLength), 0, int(math.Ceil(float64(pieceLength) / 16384))})
+	peer.pieces = append(peer.pieces, &PeerPiece{index, make([]byte, pieceLength), 0, int(math.Ceil(float64(pieceLength) / 16384))})
 	if !peer.remoteChoked {
-		peer.requestPiece(&peer.pieces[len(peer.pieces)-1])
+		peer.requestPiece(peer.pieces[len(peer.pieces)-1])
 	}
 }
 
