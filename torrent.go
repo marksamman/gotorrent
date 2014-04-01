@@ -32,6 +32,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -133,7 +134,7 @@ func (torrent *Torrent) open(filename string) error {
 				}
 			}
 
-			file, err := os.Create(path + pathList[len(pathList)-1].(string))
+			file, err := os.Create(filepath.FromSlash(path + pathList[len(pathList)-1].(string)))
 			if err != nil {
 				return err
 			}
@@ -321,17 +322,21 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 	beginPos := int64(pieceMessage.index) * int64(torrent.getPieceLength(0))
 	for k := range torrent.files {
 		file := &torrent.files[k]
-		if beginPos >= file.begin && beginPos < file.begin+file.length {
-			offsetWrite := beginPos - file.begin
+		if beginPos < file.begin {
+			break
+		}
+
+		if beginPos < file.begin+file.length {
 			amountWrite := (file.begin + file.length) - beginPos
 			if amountWrite > int64(len(pieceMessage.data)) {
 				amountWrite = int64(len(pieceMessage.data))
 			}
-			beginPos += amountWrite
 
-			file.handle.Seek(offsetWrite, 0)
+			file.handle.Seek(beginPos-file.begin, 0)
 			file.handle.Write(pieceMessage.data[:amountWrite])
 			pieceMessage.data = pieceMessage.data[amountWrite:]
+
+			beginPos += amountWrite
 		}
 	}
 
