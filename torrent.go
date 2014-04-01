@@ -26,6 +26,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -79,6 +80,24 @@ type HavePieceMessage struct {
 	index uint32
 }
 
+func (torrent *Torrent) validatePath(base string, path string) error {
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
+	absolutePath = filepath.Clean(absolutePath)
+	if len(absolutePath) < len(base) {
+		return errors.New("path is too short")
+	}
+
+	if base != absolutePath[:len(base)] {
+		return errors.New("path mismatch")
+	}
+
+	return nil
+}
+
 func (torrent *Torrent) open(filename string) error {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -109,6 +128,11 @@ func (torrent *Torrent) open(filename string) error {
 		torrent.pieces = append(torrent.pieces, TorrentPiece{[]*Peer{}, pieces[i : i+20], false, false})
 	}
 
+	base, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// Set files
 	files, exists := info["files"].([]interface{})
 	if exists {
@@ -127,14 +151,17 @@ func (torrent *Torrent) open(filename string) error {
 			path := strings.Join(pathElements, "/")
 			if len(path) != 0 {
 				path += "/"
-				err := os.MkdirAll(path, 0700)
-				if err != nil {
-					fmt.Printf("%s\n", path)
+				if err := os.MkdirAll(path, 0700); err != nil {
 					log.Fatal(err)
 				}
 			}
 
-			file, err := os.Create(filepath.FromSlash(path + pathList[len(pathList)-1].(string)))
+			fullPath := filepath.FromSlash(path + pathList[len(pathList)-1].(string))
+			if err := torrent.validatePath(base, fullPath); err != nil {
+				log.Fatal(err)
+			}
+
+			file, err := os.Create(fullPath)
 			if err != nil {
 				return err
 			}
@@ -145,7 +172,12 @@ func (torrent *Torrent) open(filename string) error {
 		}
 	} else {
 		// Single file
-		file, err := os.Create(info["name"].(string))
+		fileName := info["name"].(string)
+		if err := torrent.validatePath(base, fileName); err != nil {
+			log.Fatal(err)
+		}
+
+		file, err := os.Create(fileName)
 		if err != nil {
 			return err
 		}
