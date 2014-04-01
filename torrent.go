@@ -130,7 +130,7 @@ func (torrent *Torrent) open(filename string) error {
 
 	base, err := os.Getwd()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	// Set files
@@ -152,13 +152,13 @@ func (torrent *Torrent) open(filename string) error {
 			if len(path) != 0 {
 				path += "/"
 				if err := os.MkdirAll(path, 0700); err != nil {
-					log.Fatal(err)
+					return err
 				}
 			}
 
 			fullPath := filepath.FromSlash(path + pathList[len(pathList)-1].(string))
 			if err := torrent.validatePath(base, fullPath); err != nil {
-				log.Fatal(err)
+				return err
 			}
 
 			file, err := os.Create(fullPath)
@@ -174,7 +174,7 @@ func (torrent *Torrent) open(filename string) error {
 		// Single file
 		fileName := info["name"].(string)
 		if err := torrent.validatePath(base, fileName); err != nil {
-			log.Fatal(err)
+			return err
 		}
 
 		file, err := os.Create(fileName)
