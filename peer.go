@@ -56,7 +56,6 @@ type Peer struct {
 	remoteInterested bool
 	localChoked      bool
 	localInterested  bool
-	bitfield         []byte
 
 	requestPieceChannel   chan uint32
 	sendPieceBlockChannel chan BlockMessage
