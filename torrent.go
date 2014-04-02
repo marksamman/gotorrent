@@ -46,11 +46,12 @@ type Torrent struct {
 	pieces          []TorrentPiece
 	completedPieces int
 
-	pieceChannel      chan PieceMessage
-	bitfieldChannel   chan BitfieldMessage
-	havePieceChannel  chan HavePieceMessage
-	addPeerChannel    chan *Peer
-	removePeerChannel chan *Peer
+	pieceChannel        chan PieceMessage
+	bitfieldChannel     chan BitfieldMessage
+	havePieceChannel    chan HavePieceMessage
+	addPeerChannel      chan *Peer
+	removePeerChannel   chan *Peer
+	blockRequestChannel chan BlockRequestMessage
 }
 
 type TorrentPiece struct {
@@ -80,6 +81,13 @@ type BitfieldMessage struct {
 type HavePieceMessage struct {
 	from  *Peer
 	index uint32
+}
+
+type BlockRequestMessage struct {
+	from   *Peer
+	index  uint32
+	begin  uint32
+	length uint32
 }
 
 func (torrent *Torrent) validatePath(base string, path string) error {
@@ -231,6 +239,8 @@ func (torrent *Torrent) download() error {
 			torrent.handleBitfieldMessage(&bitfieldMessage)
 		case pieceMessage := <-torrent.pieceChannel:
 			torrent.handlePieceMessage(&pieceMessage)
+		case blockRequestMessage := <-torrent.blockRequestChannel:
+			torrent.handleBlockRequestMessage(&blockRequestMessage)
 		case peer := <-torrent.addPeerChannel:
 			torrent.handleAddPeer(peer)
 		case peer := <-torrent.removePeerChannel:
@@ -400,6 +410,12 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 		}
 	}
 
+	for _, peer := range torrent.peers {
+		go func(peer *Peer) {
+			peer.sendHaveChannel <- pieceMessage.index
+		}(peer)
+	}
+
 	fmt.Printf("Downloaded: %.2f%c\n", float64(torrent.completedPieces)*100/float64(len(torrent.pieces)), '%')
 	if torrent.completedPieces == len(torrent.pieces) {
 		for k := range torrent.files {
@@ -479,4 +495,56 @@ func (torrent *Torrent) handleRemovePeer(peer *Peer) {
 	}
 
 	fmt.Printf("%d active peers\n", len(torrent.peers))
+}
+
+func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequestMessage) {
+	if blockRequestMessage.index >= uint32(len(torrent.pieces)) {
+		close(blockRequestMessage.from.done)
+		return
+	}
+
+	piece := &torrent.pieces[blockRequestMessage.index]
+	if !piece.done {
+		close(blockRequestMessage.from.done)
+		return
+	}
+
+	end := int64(blockRequestMessage.begin) + int64(blockRequestMessage.length)
+	if end >= int64(torrent.getPieceLength(int(blockRequestMessage.index))) {
+		close(blockRequestMessage.from.done)
+		return
+	}
+
+	block := make([]byte, blockRequestMessage.length)
+	beginPos := int64(blockRequestMessage.index) * int64(torrent.getPieceLength(0))
+	for k := range torrent.files {
+		file := &torrent.files[k]
+		if beginPos < file.begin {
+			break
+		}
+
+		if beginPos < file.begin+file.length {
+			n := (file.begin + file.length) - beginPos
+			if n > int64(blockRequestMessage.length) {
+				n = int64(blockRequestMessage.length)
+			}
+
+			file.handle.Seek(beginPos-file.begin, 0)
+
+			end := beginPos + n
+			for beginPos < end {
+				count, err := file.handle.Read(block[beginPos:end])
+				if err != nil {
+					return
+				}
+				beginPos += int64(count)
+			}
+		}
+	}
+
+	blockRequestMessage.from.sendPieceBlockChannel <- BlockMessage{
+		blockRequestMessage.index,
+		blockRequestMessage.begin,
+		block,
+	}
 }

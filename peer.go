@@ -40,7 +40,7 @@ const (
 	Have
 	Bitfield
 	Request
-	Piece
+	PieceBlock
 	Cancel
 	Port
 )
@@ -57,8 +57,10 @@ type Peer struct {
 	localInterested  bool
 	bitfield         []byte
 
-	requestPieceChannel chan uint32
-	done                chan struct{}
+	requestPieceChannel   chan uint32
+	sendPieceBlockChannel chan BlockMessage
+	sendHaveChannel       chan uint32
+	done                  chan struct{}
 }
 
 type PeerPiece struct {
@@ -72,6 +74,12 @@ type Packet struct {
 	length      uint32
 	messageType int
 	payload     []byte
+}
+
+type BlockMessage struct {
+	index uint32
+	begin uint32
+	block []byte
 }
 
 func NewPeer(torrent *Torrent) *Peer {
@@ -127,6 +135,8 @@ func (peer *Peer) connect() {
 	// TODO: Validate peer id if provided by tracker
 
 	peer.requestPieceChannel = make(chan uint32)
+	peer.sendPieceBlockChannel = make(chan BlockMessage)
+	peer.sendHaveChannel = make(chan uint32)
 	peer.done = make(chan struct{})
 
 	peer.torrent.addPeerChannel <- peer
@@ -142,6 +152,10 @@ func (peer *Peer) connect() {
 		select {
 		case pieceIndex := <-peer.requestPieceChannel:
 			peer.sendPieceRequest(pieceIndex)
+		case blockMessage := <-peer.sendPieceBlockChannel:
+			peer.sendPieceBlockMessage(&blockMessage)
+		case pieceIndex := <-peer.sendHaveChannel:
+			peer.sendHaveMessage(pieceIndex)
 		case packet := <-packetChannel:
 			if err := peer.processMessage(&packet); err != nil {
 				log.Printf("error while processing message in peer %s: %s", addr, err)
@@ -229,6 +243,10 @@ func (peer *Peer) processMessage(packet *Packet) error {
 			return errors.New("length of request packet must be 13")
 		}
 
+		if !peer.remoteInterested {
+			return errors.New("peer sent request without showing interest")
+		}
+
 		buf := bytes.NewBuffer(packet.payload)
 		var index, begin, length uint32
 		binary.Read(buf, binary.BigEndian, &index)
@@ -237,8 +255,8 @@ func (peer *Peer) processMessage(packet *Packet) error {
 		if length > 32768 {
 			return errors.New("peer requested length over 32KB")
 		}
-		// TODO: Handle request
-	case Piece:
+		peer.torrent.blockRequestChannel <- BlockRequestMessage{peer, index, begin, length}
+	case PieceBlock:
 		if packet.length < 10 {
 			return errors.New("length of piece packet must be at least 10")
 		}
@@ -343,4 +361,20 @@ func (peer *Peer) requestPiece(piece *PeerPiece) {
 		pos += 16384
 	}
 	peer.sendRequest(piece.index, pos, pieceLength)
+}
+
+func (peer *Peer) sendPieceBlockMessage(blockMessage *BlockMessage) {
+	var packet bytes.Buffer
+	binary.Write(&packet, binary.BigEndian, uint32(9+len(blockMessage.block)))
+	packet.WriteByte(PieceBlock)
+	binary.Write(&packet, binary.BigEndian, blockMessage.index)
+	binary.Write(&packet, binary.BigEndian, blockMessage.begin)
+	packet.Write(blockMessage.block)
+	peer.connection.Write(packet.Bytes())
+}
+
+func (peer *Peer) sendHaveMessage(pieceIndex uint32) {
+	packet := bytes.NewBuffer([]byte{0, 0, 0, 5, Have})
+	binary.Write(packet, binary.BigEndian, pieceIndex)
+	peer.connection.Write(packet.Bytes())
 }
