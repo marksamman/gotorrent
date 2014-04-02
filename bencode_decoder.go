@@ -33,20 +33,20 @@ type BencodeDecoder struct {
 	bufio.Reader
 }
 
-func (decoder *BencodeDecoder) readIntUntil(until byte) (int, error) {
+func (decoder *BencodeDecoder) readIntUntil(until byte) (int64, error) {
 	res, err := decoder.ReadSlice(until)
 	if err != nil {
 		return -1, err
 	}
 
-	value, err := strconv.Atoi(string(res[:len(res)-1]))
+	value, err := strconv.ParseInt(string(res[:len(res)-1]), 10, 64)
 	if err != nil {
 		return -1, err
 	}
 	return value, nil
 }
 
-func (decoder *BencodeDecoder) readInt() (int, error) {
+func (decoder *BencodeDecoder) readInt() (int64, error) {
 	return decoder.readIntUntil('e')
 }
 
@@ -89,11 +89,12 @@ func (decoder *BencodeDecoder) readString() (string, error) {
 	}
 
 	stringBuffer := make([]byte, len)
-	for pos := 0; pos < len; {
+	var pos int64
+	for pos < len {
 		if n, err := decoder.Read(stringBuffer[pos:]); err != nil {
 			return "", err
 		} else {
-			pos += n
+			pos += int64(n)
 		}
 	}
 	return string(stringBuffer), nil

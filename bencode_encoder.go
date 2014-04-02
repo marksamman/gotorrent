@@ -37,16 +37,16 @@ func (encoder *BencodeEncoder) writeString(str string) {
 	encoder.WriteString(str)
 }
 
-func (encoder *BencodeEncoder) writeInt(v int) {
+func (encoder *BencodeEncoder) writeInt(v int64) {
 	encoder.WriteByte('i')
-	encoder.WriteString(strconv.Itoa(v))
+	encoder.WriteString(strconv.FormatInt(v, 10))
 	encoder.WriteByte('e')
 }
 
 func (encoder *BencodeEncoder) writeInterfaceType(v interface{}) {
 	switch v.(type) {
-	case int:
-		encoder.writeInt(v.(int))
+	case int64:
+		encoder.writeInt(v.(int64))
 	case []interface{}:
 		encoder.writeList(v.([]interface{}))
 	case map[string]interface{}:

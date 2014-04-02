@@ -145,10 +145,10 @@ func (torrent *Torrent) open(filename string) error {
 	}
 
 	// Set files
-	if files, exists := info["files"].([]interface{}); exists {
+	if files, exists := info["files"]; exists {
 		// Multiple files
 		var begin int64
-		for _, v := range files {
+		for _, v := range files.([]interface{}) {
 			v := v.(map[string]interface{})
 
 			// Set up directory structure
@@ -175,7 +175,7 @@ func (torrent *Torrent) open(filename string) error {
 				return err
 			}
 
-			length := int64(v["length"].(int))
+			length := v["length"].(int64)
 			torrent.files = append(torrent.files, File{file, begin, length})
 			begin += length
 		}
@@ -191,7 +191,7 @@ func (torrent *Torrent) open(filename string) error {
 			return err
 		}
 
-		torrent.files = []File{{file, 0, int64(info["length"].(int))}}
+		torrent.files = []File{{file, 0, info["length"].(int64)}}
 	}
 	return nil
 }
@@ -294,14 +294,10 @@ func (torrent *Torrent) getComment() string {
 	return ""
 }
 
-func (torrent *Torrent) getPieceCount() int {
-	return len(torrent.pieces)
-}
-
-func (torrent *Torrent) getPieceLength(pieceIndex int) int {
-	pieceLength := torrent.getInfo()["piece length"].(int)
+func (torrent *Torrent) getPieceLength(pieceIndex int) int64 {
+	pieceLength := torrent.getInfo()["piece length"].(int64)
 	if pieceIndex == len(torrent.pieces)-1 {
-		return int(torrent.getTotalSize() % int64(pieceLength))
+		return torrent.getTotalSize() % pieceLength
 	}
 	return pieceLength
 }
@@ -310,7 +306,7 @@ func (torrent *Torrent) getDownloadedSize() int64 {
 	var downloadedSize int64
 	for k := range torrent.pieces {
 		if torrent.pieces[k].done {
-			downloadedSize += int64(torrent.getPieceLength(k))
+			downloadedSize += torrent.getPieceLength(k)
 		}
 	}
 	return downloadedSize
@@ -342,7 +338,9 @@ func (torrent *Torrent) connectToPeers(peers interface{}) {
 			go peer.connect()
 		}
 	case []interface{}:
-		for _, dict := range peers.([]map[string]interface{}) {
+		for _, dict := range peers.([]interface{}) {
+			dict := dict.(map[string]interface{})
+
 			peer := NewPeer(torrent)
 			peer.id = dict["peer id"].(string)
 			addr, err := net.ResolveIPAddr("ip", dict["ip"].(string))
@@ -351,7 +349,7 @@ func (torrent *Torrent) connectToPeers(peers interface{}) {
 			}
 
 			peer.ip = addr.IP
-			peer.port = uint16(dict["port"].(int))
+			peer.port = uint16(dict["port"].(int64))
 			go peer.connect()
 		}
 	}
@@ -399,7 +397,7 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 	torrent.pieces[pieceMessage.index].done = true
 	torrent.completedPieces++
 
-	beginPos := int64(pieceMessage.index) * int64(torrent.getPieceLength(0))
+	beginPos := int64(pieceMessage.index) * torrent.getPieceLength(0)
 	for k := range torrent.files {
 		file := &torrent.files[k]
 		if beginPos < file.begin {
@@ -441,11 +439,11 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 		torrent.sendTrackerRequest(params)
 	} else if torrent.completedPieces == len(torrent.pieces)-8 {
 		// End game
-		incompletePiecesMap := make(map[*Peer][]int)
+		incompletePiecesMap := make(map[*Peer][]uint32)
 		for k := range torrent.pieces {
 			if !torrent.pieces[k].done {
 				for _, peer := range torrent.pieces[k].peers {
-					incompletePiecesMap[peer] = append(incompletePiecesMap[peer], k)
+					incompletePiecesMap[peer] = append(incompletePiecesMap[peer], uint32(k))
 				}
 			}
 		}
@@ -457,9 +455,9 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 				v[i], v[j] = v[j], v[i]
 			}
 
-			go func(pieces []int, p *Peer) {
+			go func(pieces []uint32, p *Peer) {
 				for _, idx := range pieces {
-					p.requestPieceChannel <- uint32(idx)
+					p.requestPieceChannel <- idx
 				}
 			}(v, peer)
 		}
@@ -524,14 +522,14 @@ func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequ
 	}
 
 	end := int64(blockRequestMessage.begin) + int64(blockRequestMessage.length)
-	if end >= int64(torrent.getPieceLength(int(blockRequestMessage.index))) {
+	if end >= torrent.getPieceLength(int(blockRequestMessage.index)) {
 		close(blockRequestMessage.from.done)
 		return
 	}
 
 	block := make([]byte, blockRequestMessage.length)
 	var pos int64
-	fileOffset := int64(blockRequestMessage.index)*int64(torrent.getPieceLength(0)) + int64(blockRequestMessage.begin)
+	fileOffset := int64(blockRequestMessage.index)*torrent.getPieceLength(0) + int64(blockRequestMessage.begin)
 	for k := range torrent.files {
 		file := &torrent.files[k]
 		if fileOffset+pos < file.begin {
