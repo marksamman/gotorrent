@@ -197,18 +197,18 @@ func (torrent *Torrent) open(filename string) error {
 }
 
 func (torrent *Torrent) download() error {
-	torrent.pieceChannel = make(chan PieceMessage)
-	torrent.bitfieldChannel = make(chan BitfieldMessage)
-	torrent.havePieceChannel = make(chan HavePieceMessage)
-	torrent.addPeerChannel = make(chan *Peer)
-	torrent.removePeerChannel = make(chan *Peer)
-
 	params := make(map[string]string)
 	params["event"] = "started"
 	resp, err := torrent.sendTrackerRequest(params)
 	if err != nil {
 		return err
 	}
+
+	torrent.pieceChannel = make(chan PieceMessage)
+	torrent.bitfieldChannel = make(chan BitfieldMessage)
+	torrent.havePieceChannel = make(chan HavePieceMessage)
+	torrent.addPeerChannel = make(chan *Peer)
+	torrent.removePeerChannel = make(chan *Peer)
 
 	torrent.connectToPeers(resp["peers"])
 
@@ -338,11 +338,14 @@ func (torrent *Torrent) connectToPeers(peers interface{}) {
 
 			go peer.connect()
 		}
-	case map[string]interface{}:
-		// TODO: dict model
-		// peer_id: string
-		// ip: hexed ipv6, dotted quad ipv4, dns name string
-		// port: int
+	case []interface{}:
+		for _, dict := range peers.([]map[string]interface{}) {
+			peer := NewPeer(torrent)
+			// peer.id = dict["peer id"].(string)
+			peer.ip = net.ParseIP(dict["ip"].(string))
+			peer.port = uint16(dict["port"].(int))
+			go peer.connect()
+		}
 	}
 }
 
