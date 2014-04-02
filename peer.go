@@ -54,6 +54,7 @@ type Peer struct {
 	connection       net.Conn
 	remoteChoked     bool
 	remoteInterested bool
+	localChoked      bool
 	localInterested  bool
 	bitfield         []byte
 
@@ -88,6 +89,7 @@ func NewPeer(torrent *Torrent) *Peer {
 
 	peer.remoteChoked = true
 	peer.remoteInterested = false
+	peer.localChoked = true
 	peer.localInterested = false
 	return &peer
 }
@@ -218,7 +220,7 @@ func (peer *Peer) processMessage(packet *Packet) error {
 		}
 
 		peer.remoteInterested = true
-		// TODO: Unchoke peer and send files
+		peer.sendUnchokeMessage()
 	case Uninterested:
 		if packet.length != 1 {
 			return errors.New("length of not interested packet must be 1")
@@ -245,6 +247,10 @@ func (peer *Peer) processMessage(packet *Packet) error {
 
 		if !peer.remoteInterested {
 			return errors.New("peer sent request without showing interest")
+		}
+
+		if peer.localChoked {
+			return errors.New("peer sent request while choked")
 		}
 
 		buf := bytes.NewBuffer(packet.payload)
@@ -377,4 +383,13 @@ func (peer *Peer) sendHaveMessage(pieceIndex uint32) {
 	packet := bytes.NewBuffer([]byte{0, 0, 0, 5, Have})
 	binary.Write(packet, binary.BigEndian, pieceIndex)
 	peer.connection.Write(packet.Bytes())
+}
+
+func (peer *Peer) sendUnchokeMessage() {
+	if !peer.localChoked {
+		return
+	}
+
+	peer.connection.Write([]byte{0, 0, 0, 1, Unchoke})
+	peer.localChoked = false
 }
