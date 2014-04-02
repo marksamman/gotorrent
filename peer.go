@@ -61,6 +61,8 @@ type Peer struct {
 	sendPieceBlockChannel chan BlockMessage
 	sendHaveChannel       chan uint32
 	done                  chan struct{}
+
+	id string
 }
 
 type PeerPiece struct {
@@ -131,9 +133,10 @@ func (peer *Peer) connect() {
 	} else if !bytes.Equal(handshake[28:48], peer.torrent.infoHash) {
 		log.Printf("info hash mismatch from peer: %s", addr)
 		return
+	} else if len(peer.id) != 0 && !bytes.Equal(handshake[48:68], []byte(peer.id)) {
+		log.Printf("peer id mismatch from peer: %s", addr)
+		return
 	}
-
-	// TODO: Validate peer id if provided by tracker
 
 	peer.requestPieceChannel = make(chan uint32)
 	peer.sendPieceBlockChannel = make(chan BlockMessage)

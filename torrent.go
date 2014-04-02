@@ -341,7 +341,7 @@ func (torrent *Torrent) connectToPeers(peers interface{}) {
 	case []interface{}:
 		for _, dict := range peers.([]map[string]interface{}) {
 			peer := NewPeer(torrent)
-			// peer.id = dict["peer id"].(string)
+			peer.id = dict["peer id"].(string)
 			peer.ip = net.ParseIP(dict["ip"].(string))
 			peer.port = uint16(dict["port"].(int))
 			go peer.connect()
