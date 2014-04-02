@@ -34,7 +34,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 type Torrent struct {
@@ -91,20 +90,13 @@ type BlockRequestMessage struct {
 }
 
 func (torrent *Torrent) validatePath(base string, path string) error {
-	absolutePath, err := filepath.Abs(path)
-	if err != nil {
+	if absolutePath, err := filepath.Abs(path); err != nil {
 		return err
-	}
-
-	absolutePath = filepath.Clean(absolutePath)
-	if len(absolutePath) < len(base) {
+	} else if len(absolutePath) < len(base) {
 		return errors.New("path is too short")
-	}
-
-	if base != absolutePath[:len(base)] {
+	} else if base != absolutePath[:len(base)] {
 		return errors.New("path mismatch")
 	}
-
 	return nil
 }
 
@@ -167,15 +159,14 @@ func (torrent *Torrent) open(filename string) error {
 				pathElements = append(pathElements, pathList[i].(string))
 			}
 
-			path := strings.Join(pathElements, "/")
+			path := filepath.Join(pathElements...)
 			if len(path) != 0 {
-				path += "/"
 				if err := os.MkdirAll(path, 0700); err != nil {
 					return err
 				}
 			}
 
-			fullPath := filepath.FromSlash(path + pathList[len(pathList)-1].(string))
+			fullPath := filepath.Join(path, pathList[len(pathList)-1].(string))
 			if err := torrent.validatePath(base, fullPath); err != nil {
 				return err
 			}
