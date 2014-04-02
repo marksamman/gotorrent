@@ -516,28 +516,28 @@ func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequ
 	}
 
 	block := make([]byte, blockRequestMessage.length)
-	beginPos := int64(blockRequestMessage.index) * int64(torrent.getPieceLength(0))
+	var pos int64
+	fileOffset := int64(blockRequestMessage.index)*int64(torrent.getPieceLength(0)) + int64(blockRequestMessage.begin)
 	for k := range torrent.files {
 		file := &torrent.files[k]
-		if beginPos < file.begin {
+		if fileOffset+pos < file.begin {
 			break
 		}
 
-		if beginPos < file.begin+file.length {
-			n := (file.begin + file.length) - beginPos
-			if n > int64(blockRequestMessage.length) {
-				n = int64(blockRequestMessage.length)
+		if fileOffset+pos < file.begin+file.length {
+			n := (file.begin + file.length) - (fileOffset + pos)
+			if n > int64(blockRequestMessage.length)-pos {
+				n = int64(blockRequestMessage.length) - pos
 			}
 
-			file.handle.Seek(beginPos-file.begin, 0)
-
-			end := beginPos + n
-			for beginPos < end {
-				count, err := file.handle.Read(block[beginPos:end])
+			file.handle.Seek((fileOffset+pos)-file.begin, 0)
+			end := pos + n
+			for pos < end {
+				count, err := file.handle.Read(block[pos:end])
 				if err != nil {
 					return
 				}
-				beginPos += int64(count)
+				pos += int64(count)
 			}
 		}
 	}
