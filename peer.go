@@ -108,10 +108,15 @@ func (peer *Peer) readN(n int) ([]byte, error) {
 }
 
 func (peer *Peer) connect() {
-	addr := fmt.Sprintf("%s:%d", peer.ip.String(), peer.port)
+	var addr string
+	if peer.ip.To4() != nil {
+		addr = fmt.Sprintf("%s:%d", peer.ip.String(), peer.port)
+	} else {
+		addr = fmt.Sprintf("[%s]:%d", peer.ip.String(), peer.port)
+	}
 
 	var err error
-	peer.connection, err = net.Dial("tcp4", addr)
+	peer.connection, err = net.Dial("tcp", addr)
 	if err != nil {
 		log.Printf("failed to connect to peer: %s\n", err)
 		return
