@@ -228,6 +228,9 @@ func (torrent *Torrent) download() error {
 			torrent.handleRemovePeer(peer)
 		}
 	}
+
+	params["event"] = "stopped"
+	torrent.sendTrackerRequest(params)
 	return nil
 }
 
@@ -432,6 +435,10 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 		for _, peer := range torrent.peers {
 			close(peer.done)
 		}
+
+		params := make(map[string]string)
+		params["event"] = "completed"
+		torrent.sendTrackerRequest(params)
 	} else if torrent.completedPieces == len(torrent.pieces)-8 {
 		// End game
 		incompletePiecesMap := make(map[*Peer][]int)
