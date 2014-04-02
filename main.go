@@ -76,10 +76,10 @@ func main() {
 	group.Add(len(client.torrents))
 	for _, torrent := range client.torrents {
 		go func(torrent *Torrent) {
-			defer group.Done()
 			if err := torrent.download(); err != nil {
 				log.Print(err)
 			}
+			group.Done()
 		}(torrent)
 	}
 	group.Wait()
