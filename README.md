@@ -5,6 +5,6 @@ BitTorrent client written in Go
 
 ##### Usage
 ```bash
-$ ./gotorrent file.torrent
+$ ./gotorrent file.torrent[ file2.torrent[ ...]]
 ```
 
