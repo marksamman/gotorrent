@@ -138,6 +138,7 @@ func (torrent *Torrent) open(filename string) error {
 	if err := os.Chdir("Downloads"); err != nil {
 		return err
 	}
+	defer os.Chdir("..")
 
 	base, err := os.Getwd()
 	if err != nil {
@@ -424,7 +425,7 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 		}(peer)
 	}
 
-	fmt.Printf("Downloaded: %.2f%c\n", float64(torrent.completedPieces)*100/float64(len(torrent.pieces)), '%')
+	fmt.Printf("[%s] Downloaded: %.2f%c\n", torrent.getName(), float64(torrent.completedPieces)*100/float64(len(torrent.pieces)), '%')
 	if torrent.completedPieces == len(torrent.pieces) {
 		for k := range torrent.files {
 			torrent.files[k].handle.Close()
@@ -480,7 +481,7 @@ func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
 
 func (torrent *Torrent) handleAddPeer(peer *Peer) {
 	torrent.peers = append(torrent.peers, peer)
-	fmt.Printf("%d active peers\n", len(torrent.peers))
+	fmt.Printf("[%s] %d active peers\n", torrent.getName(), len(torrent.peers))
 }
 
 func (torrent *Torrent) handleRemovePeer(peer *Peer) {
@@ -506,7 +507,7 @@ func (torrent *Torrent) handleRemovePeer(peer *Peer) {
 		}
 	}
 
-	fmt.Printf("%d active peers\n", len(torrent.peers))
+	fmt.Printf("[%s] %d active peers\n", torrent.getName(), len(torrent.peers))
 }
 
 func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequestMessage) {

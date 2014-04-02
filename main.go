@@ -28,18 +28,21 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"sync"
 	"time"
 )
 
 type Client struct {
-	peerID []byte
+	peerID   []byte
+	torrents []*Torrent
 }
 
 var client Client
 
 func main() {
-	if len(os.Args) <= 1 {
-		fmt.Println("usage: gotorrent file")
+	torrentCount := len(os.Args) - 1
+	if torrentCount == 0 {
+		fmt.Println("usage: gotorrent file.torrent[ file2.torrent[ ...]]")
 		return
 	}
 
@@ -55,16 +58,29 @@ func main() {
 	client.peerID = peerID.Bytes()
 
 	// Open torrent file
-	torrent := Torrent{}
-	if err := torrent.open(os.Args[1]); err != nil {
-		log.Fatal(err)
+	for i := 1; i <= torrentCount; i++ {
+		torrent := Torrent{}
+		if err := torrent.open(os.Args[i]); err != nil {
+			log.Print(err)
+			continue
+		}
+
+		fmt.Println("Name:", torrent.getName())
+		fmt.Println("Announce URL:", torrent.getAnnounceURL())
+		fmt.Println("Comment:", torrent.getComment())
+		fmt.Printf("Total size: %.2f MB\n", float64(torrent.getTotalSize())/1024/1024)
+		client.torrents = append(client.torrents, &torrent)
 	}
 
-	fmt.Println("Name:", torrent.getName())
-	fmt.Println("Announce URL:", torrent.getAnnounceURL())
-	fmt.Println("Comment:", torrent.getComment())
-	fmt.Printf("Total size: %.2f MB\n", float64(torrent.getTotalSize())/1024/1024)
-	if err := torrent.download(); err != nil {
-		log.Fatal(err)
+	var group sync.WaitGroup
+	group.Add(len(client.torrents))
+	for _, torrent := range client.torrents {
+		go func(torrent *Torrent) {
+			defer group.Done()
+			if err := torrent.download(); err != nil {
+				log.Print(err)
+			}
+		}(torrent)
 	}
+	group.Wait()
 }
