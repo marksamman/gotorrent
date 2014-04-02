@@ -342,7 +342,12 @@ func (torrent *Torrent) connectToPeers(peers interface{}) {
 		for _, dict := range peers.([]map[string]interface{}) {
 			peer := NewPeer(torrent)
 			peer.id = dict["peer id"].(string)
-			peer.ip = net.ParseIP(dict["ip"].(string))
+			addr, err := net.ResolveIPAddr("ip", dict["ip"].(string))
+			if err != nil {
+				continue
+			}
+
+			peer.ip = addr.IP
 			peer.port = uint16(dict["port"].(int))
 			go peer.connect()
 		}
