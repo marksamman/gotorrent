@@ -130,11 +130,14 @@ func (peer *Peer) connect() {
 	if handshake, err := peer.readN(68); err != nil {
 		log.Printf("failed to read handshake from peer: %s\n", err)
 		return
+	} else if !bytes.Equal(handshake[0:20], []byte("\x13BitTorrent protocol")) {
+		log.Printf("bad protocol from peer: %s\n", addr)
+		return
 	} else if !bytes.Equal(handshake[28:48], peer.torrent.infoHash) {
-		log.Printf("info hash mismatch from peer: %s", addr)
+		log.Printf("info hash mismatch from peer: %s\n", addr)
 		return
 	} else if len(peer.id) != 0 && !bytes.Equal(handshake[48:68], []byte(peer.id)) {
-		log.Printf("peer id mismatch from peer: %s", addr)
+		log.Printf("peer id mismatch from peer: %s\n", addr)
 		return
 	}
 
