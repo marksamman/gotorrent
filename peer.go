@@ -321,6 +321,10 @@ func (peer *Peer) getPeerPiece(index uint32) (*PeerPiece, int) {
 }
 
 func (peer *Peer) sendPieceRequest(index uint32) {
+	if piece, _ := peer.getPeerPiece(index); piece != nil {
+		return
+	}
+
 	peer.sendInterested()
 
 	pieceLength := peer.torrent.getPieceLength(int(index))
