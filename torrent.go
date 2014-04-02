@@ -145,8 +145,7 @@ func (torrent *Torrent) open(filename string) error {
 	}
 
 	// Set files
-	files, exists := info["files"].([]interface{})
-	if exists {
+	if files, exists := info["files"].([]interface{}); exists {
 		// Multiple files
 		var begin int64
 		for _, v := range files {
@@ -206,20 +205,11 @@ func (torrent *Torrent) download() error {
 
 	params := make(map[string]string)
 	params["event"] = "started"
-	httpResponse, err := torrent.sendTrackerRequest(params)
+	resp, err := torrent.sendTrackerRequest(params)
 	if err != nil {
 		return err
 	}
-	defer httpResponse.Body.Close()
 
-	if httpResponse.StatusCode != 200 {
-		return fmt.Errorf("bad response from tracker: %s", httpResponse.Status)
-	}
-
-	resp, err := BencodeDecode(httpResponse.Body)
-	if err != nil {
-		return err
-	}
 	torrent.connectToPeers(resp["peers"])
 
 	for len(torrent.peers) != 0 || torrent.completedPieces != len(torrent.pieces) {
@@ -247,7 +237,7 @@ func (torrent *Torrent) checkPieceHash(pieceMessage *PieceMessage) bool {
 	return bytes.Equal(hasher.Sum(nil), []byte(torrent.pieces[pieceMessage.index].hash))
 }
 
-func (torrent *Torrent) sendTrackerRequest(params map[string]string) (*http.Response, error) {
+func (torrent *Torrent) sendTrackerRequest(params map[string]string) (map[string]interface{}, error) {
 	var paramBuf bytes.Buffer
 	for k, v := range params {
 		paramBuf.WriteString(k)
@@ -255,12 +245,31 @@ func (torrent *Torrent) sendTrackerRequest(params map[string]string) (*http.Resp
 		paramBuf.WriteString(v)
 		paramBuf.WriteByte('&')
 	}
-	return http.Get(
+
+	httpResponse, err := http.Get(
 		fmt.Sprintf("%s?%speer_id=%s&info_hash=%s&left=%d&compact=1",
 			torrent.getAnnounceURL(), paramBuf.String(),
 			url.QueryEscape(string(client.peerID)),
 			url.QueryEscape(string(torrent.infoHash)),
 			torrent.getTotalSize()-torrent.getDownloadedSize()))
+	if err != nil {
+		return nil, err
+	}
+	defer httpResponse.Body.Close()
+
+	if httpResponse.StatusCode != 200 {
+		return nil, fmt.Errorf("bad response from tracker: %s", httpResponse.Status)
+	}
+
+	resp, err := BencodeDecode(httpResponse.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if failureReason, exists := resp["failure reason"]; exists {
+		return nil, errors.New(failureReason.(string))
+	}
+	return resp, nil
 }
 
 func (torrent *Torrent) getAnnounceURL() string {
@@ -276,11 +285,10 @@ func (torrent *Torrent) getInfo() map[string]interface{} {
 }
 
 func (torrent *Torrent) getComment() string {
-	comment, exists := torrent.data["comment"]
-	if !exists {
-		return ""
+	if comment, exists := torrent.data["comment"]; exists {
+		return comment.(string)
 	}
-	return comment.(string)
+	return ""
 }
 
 func (torrent *Torrent) getPieceCount() int {
