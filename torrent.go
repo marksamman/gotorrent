@@ -160,15 +160,15 @@ func (torrent *Torrent) open(filename string) error {
 			}
 
 			path := filepath.Join(pathElements...)
+			fullPath := filepath.Join(path, pathList[len(pathList)-1].(string))
+			if err := torrent.validatePath(base, fullPath); err != nil {
+				return err
+			}
+
 			if len(path) != 0 {
 				if err := os.MkdirAll(path, 0700); err != nil {
 					return err
 				}
-			}
-
-			fullPath := filepath.Join(path, pathList[len(pathList)-1].(string))
-			if err := torrent.validatePath(base, fullPath); err != nil {
-				return err
 			}
 
 			file, err := os.Create(fullPath)
