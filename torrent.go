@@ -411,7 +411,7 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 				amountWrite = int64(len(pieceMessage.data))
 			}
 
-			file.handle.Seek(beginPos-file.begin, 0)
+			file.handle.Seek(beginPos-file.begin, os.SEEK_SET)
 			file.handle.Write(pieceMessage.data[:amountWrite])
 			pieceMessage.data = pieceMessage.data[amountWrite:]
 
@@ -543,7 +543,7 @@ func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequ
 				n = int64(blockRequestMessage.length) - pos
 			}
 
-			file.handle.Seek((fileOffset+pos)-file.begin, 0)
+			file.handle.Seek((fileOffset+pos)-file.begin, os.SEEK_SET)
 			end := pos + n
 			for pos < end {
 				count, err := file.handle.Read(block[pos:end])
