@@ -34,6 +34,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+
+	"github.com/marksamman/gotorrent/bencode"
 )
 
 type Torrent struct {
@@ -107,7 +109,7 @@ func (torrent *Torrent) open(filename string) error {
 	}
 	defer file.Close()
 
-	torrent.data, err = BencodeDecode(file)
+	torrent.data, err = bencode.Decode(file)
 	if err != nil {
 		return err
 	}
@@ -116,7 +118,7 @@ func (torrent *Torrent) open(filename string) error {
 
 	// Set info hash
 	hasher := sha1.New()
-	hasher.Write(BencodeEncode(info))
+	hasher.Write(bencode.Encode(info))
 	torrent.infoHash = hasher.Sum(nil)
 
 	// Set handshake
@@ -265,7 +267,7 @@ func (torrent *Torrent) sendTrackerRequest(params map[string]string) (map[string
 		return nil, fmt.Errorf("bad response from tracker: %s", httpResponse.Status)
 	}
 
-	resp, err := BencodeDecode(httpResponse.Body)
+	resp, err := bencode.Decode(httpResponse.Body)
 	if err != nil {
 		return nil, err
 	}

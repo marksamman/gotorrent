@@ -20,43 +20,65 @@
  * THE SOFTWARE.
  */
 
-package main
+package bencode
 
 import (
 	"bytes"
 	"strconv"
 )
 
-type BencodeEncoder struct {
+type encoder struct {
 	bytes.Buffer
 }
 
-func (encoder *BencodeEncoder) writeString(str string) {
+func (encoder *encoder) writeString(str string) {
 	encoder.WriteString(strconv.Itoa(len(str)))
 	encoder.WriteByte(':')
 	encoder.WriteString(str)
 }
 
-func (encoder *BencodeEncoder) writeInt(v int64) {
+func (encoder *encoder) writeInt(v int64) {
 	encoder.WriteByte('i')
 	encoder.WriteString(strconv.FormatInt(v, 10))
 	encoder.WriteByte('e')
 }
 
-func (encoder *BencodeEncoder) writeInterfaceType(v interface{}) {
+func (encoder *encoder) writeUint(v uint64) {
+	encoder.WriteByte('i')
+	encoder.WriteString(strconv.FormatUint(v, 10))
+	encoder.WriteByte('e')
+}
+
+func (encoder *encoder) writeInterfaceType(v interface{}) {
 	switch v.(type) {
-	case int64:
-		encoder.writeInt(v.(int64))
+	case string:
+		encoder.writeString(v.(string))
 	case []interface{}:
 		encoder.writeList(v.([]interface{}))
 	case map[string]interface{}:
 		encoder.writeDictionary(v.(map[string]interface{}))
-	case string:
-		encoder.writeString(v.(string))
+	case int:
+		encoder.writeInt(int64(v.(int)))
+	case int8:
+		encoder.writeInt(int64(v.(int8)))
+	case int16:
+		encoder.writeInt(int64(v.(int16)))
+	case int32:
+		encoder.writeInt(int64(v.(int32)))
+	case int64:
+		encoder.writeInt(v.(int64))
+	case uint8:
+		encoder.writeUint(uint64(v.(uint8)))
+	case uint16:
+		encoder.writeUint(uint64(v.(uint16)))
+	case uint32:
+		encoder.writeUint(uint64(v.(uint32)))
+	case uint64:
+		encoder.writeUint(v.(uint64))
 	}
 }
 
-func (encoder *BencodeEncoder) writeList(list []interface{}) {
+func (encoder *encoder) writeList(list []interface{}) {
 	encoder.WriteByte('l')
 	for _, v := range list {
 		encoder.writeInterfaceType(v)
@@ -64,7 +86,7 @@ func (encoder *BencodeEncoder) writeList(list []interface{}) {
 	encoder.WriteByte('e')
 }
 
-func (encoder *BencodeEncoder) writeDictionary(dict map[string]interface{}) {
+func (encoder *encoder) writeDictionary(dict map[string]interface{}) {
 	encoder.WriteByte('d')
 	for k, v := range dict {
 		// Key
@@ -76,8 +98,10 @@ func (encoder *BencodeEncoder) writeDictionary(dict map[string]interface{}) {
 	encoder.WriteByte('e')
 }
 
-func BencodeEncode(dict interface{}) []byte {
-	encoder := BencodeEncoder{}
+// Encode takes a bencode dictionary and returns a
+// bencode byte array representation of the dictionary
+func Encode(dict interface{}) []byte {
+	encoder := encoder{}
 	encoder.writeDictionary(dict.(map[string]interface{}))
 	return encoder.Bytes()
 }

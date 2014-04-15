@@ -20,7 +20,7 @@
  * THE SOFTWARE.
  */
 
-package main
+package bencode
 
 import (
 	"bufio"
@@ -29,11 +29,11 @@ import (
 	"strconv"
 )
 
-type BencodeDecoder struct {
+type decoder struct {
 	bufio.Reader
 }
 
-func (decoder *BencodeDecoder) readIntUntil(until byte) (int64, error) {
+func (decoder *decoder) readIntUntil(until byte) (int64, error) {
 	res, err := decoder.ReadSlice(until)
 	if err != nil {
 		return -1, err
@@ -46,11 +46,11 @@ func (decoder *BencodeDecoder) readIntUntil(until byte) (int64, error) {
 	return value, nil
 }
 
-func (decoder *BencodeDecoder) readInt() (int64, error) {
+func (decoder *decoder) readInt() (int64, error) {
 	return decoder.readIntUntil('e')
 }
 
-func (decoder *BencodeDecoder) readList() ([]interface{}, error) {
+func (decoder *decoder) readList() ([]interface{}, error) {
 	var list []interface{}
 	for {
 		ch, err := decoder.ReadByte()
@@ -82,7 +82,7 @@ func (decoder *BencodeDecoder) readList() ([]interface{}, error) {
 	}
 }
 
-func (decoder *BencodeDecoder) readString() (string, error) {
+func (decoder *decoder) readString() (string, error) {
 	len, err := decoder.readIntUntil(':')
 	if err != nil {
 		return "", err
@@ -91,16 +91,16 @@ func (decoder *BencodeDecoder) readString() (string, error) {
 	stringBuffer := make([]byte, len)
 	var pos int64
 	for pos < len {
-		if n, err := decoder.Read(stringBuffer[pos:]); err != nil {
+		var n int
+		if n, err = decoder.Read(stringBuffer[pos:]); err != nil {
 			return "", err
-		} else {
-			pos += int64(n)
 		}
+		pos += int64(n)
 	}
 	return string(stringBuffer), nil
 }
 
-func (decoder *BencodeDecoder) readDictionary() (map[string]interface{}, error) {
+func (decoder *decoder) readDictionary() (map[string]interface{}, error) {
 	dict := make(map[string]interface{})
 	for {
 		key, err := decoder.readString()
@@ -147,8 +147,10 @@ func (decoder *BencodeDecoder) readDictionary() (map[string]interface{}, error) 
 	}
 }
 
-func BencodeDecode(reader io.Reader) (map[string]interface{}, error) {
-	decoder := BencodeDecoder{*bufio.NewReader(reader)}
+// Decode takes an io.Reader and parses it as bencode,
+// on failure, err will be a non-nil value
+func Decode(reader io.Reader) (map[string]interface{}, error) {
+	decoder := decoder{*bufio.NewReader(reader)}
 	if firstByte, err := decoder.ReadByte(); err != nil {
 		return make(map[string]interface{}), nil
 	} else if firstByte != 'd' {
