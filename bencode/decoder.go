@@ -149,6 +149,8 @@ func (decoder *decoder) readDictionary() (map[string]interface{}, error) {
 
 // Decode takes an io.Reader and parses it as bencode,
 // on failure, err will be a non-nil value
+//
+// NOTE: Does not support decoding ints larger than int64
 func Decode(reader io.Reader) (map[string]interface{}, error) {
 	decoder := decoder{*bufio.NewReader(reader)}
 	if firstByte, err := decoder.ReadByte(); err != nil {
