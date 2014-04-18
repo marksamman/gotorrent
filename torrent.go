@@ -302,7 +302,9 @@ func (torrent *Torrent) getComment() string {
 func (torrent *Torrent) getPieceLength(pieceIndex int) int64 {
 	pieceLength := torrent.getInfo()["piece length"].(int64)
 	if pieceIndex == len(torrent.pieces)-1 {
-		return torrent.getTotalSize() % pieceLength
+		if res := torrent.getTotalSize() % pieceLength; res != 0 {
+			return res
+		}
 	}
 	return pieceLength
 }
