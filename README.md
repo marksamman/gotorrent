@@ -17,3 +17,4 @@ $ ./gotorrent file.torrent[ file2.torrent[ ...]]
 * Show upload/download speed
 * Tests
 * Text-based UI (ncurses?)
+* Request piece from peer when receiving Have if we don't have the piece and peer is idle
