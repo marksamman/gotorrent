@@ -474,11 +474,29 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
 	for k := range torrent.pieces {
 		if !torrent.pieces[k].busy {
-			torrent.pieces[k].busy = true
-			go func() {
-				peer.requestPieceChannel <- uint32(k)
-			}()
-			break
+			for _, p := range torrent.peers {
+				if p == peer {
+					torrent.pieces[k].busy = true
+					go func() {
+						peer.requestPieceChannel <- uint32(k)
+					}()
+					return
+				}
+			}
+		}
+	}
+
+	// Help with incomplete pieces
+	for k := range torrent.pieces {
+		if !torrent.pieces[k].done {
+			for _, p := range torrent.peers {
+				if p == peer {
+					go func() {
+						peer.requestPieceChannel <- uint32(k)
+					}()
+					return
+				}
+			}
 		}
 	}
 }
