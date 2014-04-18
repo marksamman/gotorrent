@@ -46,6 +46,7 @@ type Torrent struct {
 	files           []File
 	pieces          []TorrentPiece
 	completedPieces int
+	uploadedBytes   uint32
 
 	pieceChannel        chan PieceMessage
 	bitfieldChannel     chan BitfieldMessage
@@ -252,12 +253,13 @@ func (torrent *Torrent) sendTrackerRequest(params map[string]string) (map[string
 		paramBuf.WriteByte('&')
 	}
 
-	httpResponse, err := http.Get(
-		fmt.Sprintf("%s?%speer_id=%s&info_hash=%s&left=%d&compact=1",
-			torrent.getAnnounceURL(), paramBuf.String(),
-			url.QueryEscape(string(client.peerID)),
-			url.QueryEscape(string(torrent.infoHash)),
-			torrent.getTotalSize()-torrent.getDownloadedSize()))
+	downloadedBytes := torrent.getDownloadedSize()
+	httpResponse, err := http.Get(fmt.Sprintf("%s?%speer_id=%s&info_hash=%s&left=%d&compact=1&downloaded=%d&uploaded=%d&port=6881",
+		torrent.getAnnounceURL(), paramBuf.String(),
+		url.QueryEscape(string(client.peerID)),
+		url.QueryEscape(string(torrent.infoHash)),
+		torrent.getTotalSize()-downloadedBytes,
+		downloadedBytes, torrent.uploadedBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -557,6 +559,7 @@ func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequ
 		}
 	}
 
+	torrent.uploadedBytes += blockRequestMessage.length
 	blockRequestMessage.from.sendPieceBlockChannel <- BlockMessage{
 		blockRequestMessage.index,
 		blockRequestMessage.begin,
