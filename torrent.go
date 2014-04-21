@@ -23,6 +23,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha1"
 	"encoding/binary"
@@ -39,7 +40,12 @@ import (
 )
 
 type Torrent struct {
-	data            map[string]interface{}
+	name        string
+	announceURL string
+	comment     string
+	pieceLength int64
+	totalSize   int64
+
 	infoHash        []byte
 	peers           []*Peer
 	handshake       []byte
@@ -110,12 +116,19 @@ func (torrent *Torrent) open(filename string) error {
 	}
 	defer file.Close()
 
-	torrent.data, err = bencode.Decode(file)
+	data, err := bencode.Decode(file)
 	if err != nil {
 		return err
 	}
 
-	info := torrent.getInfo()
+	torrent.announceURL = data["announce"].(string)
+	if comment, ok := data["comment"]; ok {
+		torrent.comment = comment.(string)
+	}
+
+	info := data["info"].(map[string]interface{})
+	torrent.name = info["name"].(string)
+	torrent.pieceLength = info["piece length"].(int64)
 
 	// Set info hash
 	hasher := sha1.New()
@@ -166,6 +179,11 @@ func (torrent *Torrent) open(filename string) error {
 		}
 
 		// Multiple files
+		for _, v := range files.([]interface{}) {
+			v := v.(map[string]interface{})
+			torrent.totalSize += v["length"].(int64)
+		}
+
 		var begin int64
 		for _, v := range files.([]interface{}) {
 			v := v.(map[string]interface{})
@@ -189,12 +207,15 @@ func (torrent *Torrent) open(filename string) error {
 				}
 			}
 
-			file, err := os.Create(fullPath)
-			if err != nil {
+			length := v["length"].(int64)
+
+			file, err := os.OpenFile(fullPath, os.O_RDWR, 0600)
+			if err == nil {
+				torrent.findCompletedPieces(file, begin, length)
+			} else if file, err = os.Create(fullPath); err != nil {
 				return err
 			}
 
-			length := v["length"].(int64)
 			torrent.files = append(torrent.files, File{file, begin, length})
 			begin += length
 		}
@@ -205,14 +226,61 @@ func (torrent *Torrent) open(filename string) error {
 			return err
 		}
 
-		file, err := os.Create(fileName)
-		if err != nil {
+		length := info["length"].(int64)
+		torrent.totalSize = length
+
+		file, err := os.OpenFile(fileName, os.O_RDWR, 0600)
+		if err == nil {
+			torrent.findCompletedPieces(file, 0, length)
+		} else if file, err = os.Create(fileName); err != nil {
 			return err
 		}
-
-		torrent.files = []File{{file, 0, info["length"].(int64)}}
+		torrent.files = []File{{file, 0, length}}
 	}
 	return nil
+}
+
+func (torrent *Torrent) findCompletedPieces(file *os.File, begin, length int64) {
+	// TODO: check previous file in multifile torrents
+	if fi, err := file.Stat(); err != nil {
+		return
+	} else if fi.Size() != length {
+		file.Truncate(0)
+		return
+	}
+
+	pieceLength := torrent.pieceLength
+	buf := make([]byte, pieceLength)
+	pieceIndex := uint32(0)
+	if begin != 0 {
+		pieceIndex = uint32(pieceLength / begin)
+	}
+
+	fileEnd := begin + length
+	pos := int64(pieceIndex) * pieceLength
+	file.Seek(pos-begin, os.SEEK_SET)
+	reader := bufio.NewReaderSize(file, int(pieceLength))
+
+	for pos+pieceLength < fileEnd {
+		reader.Read(buf)
+		if torrent.checkPieceHash(buf, pieceIndex) {
+			torrent.pieces[pieceIndex].busy = true
+			torrent.pieces[pieceIndex].done = true
+			torrent.completedPieces++
+		}
+		pos += pieceLength
+		pieceIndex++
+	}
+
+	if int(pieceIndex) == len(torrent.pieces)-1 {
+		pieceLength = torrent.getLastPieceLength()
+		reader.Read(buf[:pieceLength])
+		if torrent.checkPieceHash(buf[:pieceLength], pieceIndex) {
+			torrent.pieces[pieceIndex].busy = true
+			torrent.pieces[pieceIndex].done = true
+			torrent.completedPieces++
+		}
+	}
 }
 
 func (torrent *Torrent) download() error {
@@ -253,10 +321,10 @@ func (torrent *Torrent) download() error {
 	return nil
 }
 
-func (torrent *Torrent) checkPieceHash(pieceMessage *PieceMessage) bool {
+func (torrent *Torrent) checkPieceHash(data []byte, pieceIndex uint32) bool {
 	hasher := sha1.New()
-	hasher.Write(pieceMessage.data)
-	return bytes.Equal(hasher.Sum(nil), []byte(torrent.pieces[pieceMessage.index].hash))
+	hasher.Write(data)
+	return bytes.Equal(hasher.Sum(nil), []byte(torrent.pieces[pieceIndex].hash))
 }
 
 func (torrent *Torrent) sendTrackerRequest(params map[string]string) (map[string]interface{}, error) {
@@ -270,10 +338,10 @@ func (torrent *Torrent) sendTrackerRequest(params map[string]string) (map[string
 
 	downloadedBytes := torrent.getDownloadedSize()
 	httpResponse, err := http.Get(fmt.Sprintf("%s?%speer_id=%s&info_hash=%s&left=%d&compact=1&downloaded=%d&uploaded=%d&port=6881",
-		torrent.getAnnounceURL(), paramBuf.String(),
+		torrent.announceURL, paramBuf.String(),
 		url.QueryEscape(string(client.peerID)),
 		url.QueryEscape(string(torrent.infoHash)),
-		torrent.getTotalSize()-downloadedBytes,
+		torrent.totalSize-downloadedBytes,
 		downloadedBytes, torrent.uploadedBytes))
 	if err != nil {
 		return nil, err
@@ -295,33 +363,20 @@ func (torrent *Torrent) sendTrackerRequest(params map[string]string) (map[string
 	return resp, nil
 }
 
-func (torrent *Torrent) getAnnounceURL() string {
-	return torrent.data["announce"].(string)
-}
-
-func (torrent *Torrent) getName() string {
-	return torrent.getInfo()["name"].(string)
-}
-
-func (torrent *Torrent) getInfo() map[string]interface{} {
-	return torrent.data["info"].(map[string]interface{})
-}
-
-func (torrent *Torrent) getComment() string {
-	if comment, exists := torrent.data["comment"]; exists {
-		return comment.(string)
-	}
-	return ""
-}
-
 func (torrent *Torrent) getPieceLength(pieceIndex int) int64 {
-	pieceLength := torrent.getInfo()["piece length"].(int64)
 	if pieceIndex == len(torrent.pieces)-1 {
-		if res := torrent.getTotalSize() % pieceLength; res != 0 {
+		if res := torrent.totalSize % torrent.pieceLength; res != 0 {
 			return res
 		}
 	}
-	return pieceLength
+	return torrent.pieceLength
+}
+
+func (torrent *Torrent) getLastPieceLength() int64 {
+	if res := torrent.totalSize % torrent.pieceLength; res != 0 {
+		return res
+	}
+	return torrent.pieceLength
 }
 
 func (torrent *Torrent) getDownloadedSize() int64 {
@@ -332,14 +387,6 @@ func (torrent *Torrent) getDownloadedSize() int64 {
 		}
 	}
 	return downloadedSize
-}
-
-func (torrent *Torrent) getTotalSize() int64 {
-	var size int64
-	for k := range torrent.files {
-		size += torrent.files[k].length
-	}
-	return size
 }
 
 func (torrent *Torrent) connectToPeers(peers interface{}) {
@@ -410,7 +457,7 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 		return
 	}
 
-	if !torrent.checkPieceHash(pieceMessage) {
+	if !torrent.checkPieceHash(pieceMessage.data, pieceMessage.index) {
 		torrent.pieces[pieceMessage.index].busy = false
 		close(pieceMessage.from.done)
 		return
@@ -419,7 +466,7 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 	torrent.pieces[pieceMessage.index].done = true
 	torrent.completedPieces++
 
-	beginPos := int64(pieceMessage.index) * torrent.getPieceLength(0)
+	beginPos := int64(pieceMessage.index) * torrent.pieceLength
 	for k := range torrent.files {
 		file := &torrent.files[k]
 		if beginPos < file.begin {
@@ -446,7 +493,7 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 		}(peer)
 	}
 
-	fmt.Printf("[%s] Downloaded: %.2f%c\n", torrent.getName(), float64(torrent.completedPieces)*100/float64(len(torrent.pieces)), '%')
+	fmt.Printf("[%s] Downloaded: %.2f%c\n", torrent.name, float64(torrent.completedPieces)*100/float64(len(torrent.pieces)), '%')
 	if torrent.completedPieces == len(torrent.pieces) {
 		for k := range torrent.files {
 			torrent.files[k].handle.Close()
@@ -520,7 +567,7 @@ func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
 
 func (torrent *Torrent) handleAddPeer(peer *Peer) {
 	torrent.peers = append(torrent.peers, peer)
-	fmt.Printf("[%s] %d active peers\n", torrent.getName(), len(torrent.peers))
+	fmt.Printf("[%s] %d active peers\n", torrent.name, len(torrent.peers))
 }
 
 func (torrent *Torrent) handleRemovePeer(peer *Peer) {
@@ -546,7 +593,7 @@ func (torrent *Torrent) handleRemovePeer(peer *Peer) {
 		}
 	}
 
-	fmt.Printf("[%s] %d active peers\n", torrent.getName(), len(torrent.peers))
+	fmt.Printf("[%s] %d active peers\n", torrent.name, len(torrent.peers))
 }
 
 func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequestMessage) {
@@ -569,7 +616,7 @@ func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequ
 
 	block := make([]byte, blockRequestMessage.length)
 	var pos int64
-	fileOffset := int64(blockRequestMessage.index)*torrent.getPieceLength(0) + int64(blockRequestMessage.begin)
+	fileOffset := int64(blockRequestMessage.index)*torrent.pieceLength + int64(blockRequestMessage.begin)
 	for k := range torrent.files {
 		file := &torrent.files[k]
 		if fileOffset+pos < file.begin {

@@ -65,10 +65,10 @@ func main() {
 			continue
 		}
 
-		fmt.Println("Name:", torrent.getName())
-		fmt.Println("Announce URL:", torrent.getAnnounceURL())
-		fmt.Println("Comment:", torrent.getComment())
-		fmt.Printf("Total size: %.2f MB\n", float64(torrent.getTotalSize())/1024/1024)
+		fmt.Println("Name:", torrent.name)
+		fmt.Println("Announce URL:", torrent.announceURL)
+		fmt.Println("Comment:", torrent.comment)
+		fmt.Printf("Total size: %.2f MB\n", float64(torrent.totalSize/1024/1024))
 		client.torrents = append(client.torrents, &torrent)
 	}
 
