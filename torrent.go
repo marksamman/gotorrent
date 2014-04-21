@@ -179,11 +179,6 @@ func (torrent *Torrent) open(filename string) error {
 		}
 
 		// Multiple files
-		for _, v := range files.([]interface{}) {
-			v := v.(map[string]interface{})
-			torrent.totalSize += v["length"].(int64)
-		}
-
 		var begin int64
 		for k, v := range files.([]interface{}) {
 			v := v.(map[string]interface{})
@@ -208,6 +203,7 @@ func (torrent *Torrent) open(filename string) error {
 			}
 
 			length := v["length"].(int64)
+			torrent.totalSize += length
 
 			file, err := os.OpenFile(fullPath, os.O_RDWR, 0600)
 			if err == nil {
@@ -278,7 +274,6 @@ func (torrent *Torrent) findCompletedPieces(file *os.File, begin, length int64, 
 		}
 
 		if torrent.checkPieceHash(buf, pieceIndex) {
-			torrent.pieces[pieceIndex].busy = true
 			torrent.pieces[pieceIndex].done = true
 			torrent.completedPieces++
 		}
@@ -292,7 +287,6 @@ func (torrent *Torrent) findCompletedPieces(file *os.File, begin, length int64, 
 	for pos+torrent.pieceLength < fileEnd {
 		reader.Read(buf)
 		if torrent.checkPieceHash(buf, pieceIndex) {
-			torrent.pieces[pieceIndex].busy = true
 			torrent.pieces[pieceIndex].done = true
 			torrent.completedPieces++
 		}
@@ -304,7 +298,6 @@ func (torrent *Torrent) findCompletedPieces(file *os.File, begin, length int64, 
 		pieceLength := torrent.getLastPieceLength()
 		reader.Read(buf[:pieceLength])
 		if torrent.checkPieceHash(buf[:pieceLength], pieceIndex) {
-			torrent.pieces[pieceIndex].busy = true
 			torrent.pieces[pieceIndex].done = true
 			torrent.completedPieces++
 		}
@@ -486,7 +479,6 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 	}
 
 	if !torrent.checkPieceHash(pieceMessage.data, pieceMessage.index) {
-		torrent.pieces[pieceMessage.index].busy = false
 		close(pieceMessage.from.done)
 		return
 	}
@@ -563,30 +555,36 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 }
 
 func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
+	incomplete := []int{}
 	for k := range torrent.pieces {
-		if !torrent.pieces[k].busy {
-			for _, p := range torrent.peers {
-				if p == peer {
-					torrent.pieces[k].busy = true
-					go func() {
-						peer.requestPieceChannel <- uint32(k)
-					}()
-					return
-				}
+		if torrent.pieces[k].done {
+			continue
+		}
+
+		if torrent.pieces[k].busy {
+			incomplete = append(incomplete, k)
+			continue
+		}
+
+		for _, p := range torrent.peers {
+			if p == peer {
+				torrent.pieces[k].busy = true
+				go func() {
+					peer.requestPieceChannel <- uint32(k)
+				}()
+				return
 			}
 		}
 	}
 
 	// Help with incomplete pieces
-	for k := range torrent.pieces {
-		if !torrent.pieces[k].done {
-			for _, p := range torrent.peers {
-				if p == peer {
-					go func() {
-						peer.requestPieceChannel <- uint32(k)
-					}()
-					return
-				}
+	for _, v := range incomplete {
+		for _, p := range torrent.pieces[v].peers {
+			if p == peer {
+				go func() {
+					peer.requestPieceChannel <- uint32(v)
+				}()
+				return
 			}
 		}
 	}
@@ -613,13 +611,6 @@ func (torrent *Torrent) handleRemovePeer(peer *Peer) {
 			}
 		}
 	}
-
-	for _, v := range peer.pieces {
-		if torrent.pieces[v.index].busy && !torrent.pieces[v.index].done {
-			torrent.pieces[v.index].busy = false
-		}
-	}
-
 	fmt.Printf("[%s] %d active peers\n", torrent.name, len(torrent.peers))
 }
 
