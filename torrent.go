@@ -253,12 +253,12 @@ func (torrent *Torrent) findCompletedPieces(file *os.File, begin, length int64, 
 
 	fileEnd := begin + length
 	pos := int64(pieceIndex) * torrent.pieceLength
-	if pos > fileEnd {
+	if pos+torrent.pieceLength > fileEnd {
 		return
 	}
 
 	if pos < begin {
-		bufPos := int64(len(buf)) - (pos + torrent.pieceLength) + begin
+		bufPos := begin - pos
 		file.Read(buf[bufPos:])
 		for bufPos != 0 {
 			fileIndex--
