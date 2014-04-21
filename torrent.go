@@ -249,31 +249,32 @@ func (torrent *Torrent) findCompletedPieces(file *os.File, begin, length int64) 
 		return
 	}
 
-	pieceLength := torrent.pieceLength
-	buf := make([]byte, pieceLength)
-	pieceIndex := uint32(0)
+	buf := make([]byte, torrent.pieceLength)
+
+	var pieceIndex uint32
 	if begin != 0 {
-		pieceIndex = uint32(pieceLength / begin)
+		pieceIndex = uint32(begin / torrent.pieceLength)
 	}
 
 	fileEnd := begin + length
-	pos := int64(pieceIndex) * pieceLength
-	file.Seek(pos-begin, os.SEEK_SET)
-	reader := bufio.NewReaderSize(file, int(pieceLength))
+	pos := int64(pieceIndex) * torrent.pieceLength
 
-	for pos+pieceLength < fileEnd {
+	file.Seek(pos-begin, os.SEEK_SET)
+	reader := bufio.NewReaderSize(file, int(torrent.pieceLength))
+
+	for pos+torrent.pieceLength < fileEnd {
 		reader.Read(buf)
 		if torrent.checkPieceHash(buf, pieceIndex) {
 			torrent.pieces[pieceIndex].busy = true
 			torrent.pieces[pieceIndex].done = true
 			torrent.completedPieces++
 		}
-		pos += pieceLength
+		pos += torrent.pieceLength
 		pieceIndex++
 	}
 
 	if int(pieceIndex) == len(torrent.pieces)-1 {
-		pieceLength = torrent.getLastPieceLength()
+		pieceLength := torrent.getLastPieceLength()
 		reader.Read(buf[:pieceLength])
 		if torrent.checkPieceHash(buf[:pieceLength], pieceIndex) {
 			torrent.pieces[pieceIndex].busy = true
@@ -479,8 +480,7 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 				amountWrite = int64(len(pieceMessage.data))
 			}
 
-			file.handle.Seek(beginPos-file.begin, os.SEEK_SET)
-			file.handle.Write(pieceMessage.data[:amountWrite])
+			file.handle.WriteAt(pieceMessage.data[:amountWrite], beginPos-file.begin)
 			pieceMessage.data = pieceMessage.data[amountWrite:]
 
 			beginPos += amountWrite

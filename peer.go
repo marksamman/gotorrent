@@ -116,8 +116,7 @@ func (peer *Peer) connect() {
 	}
 
 	var err error
-	peer.connection, err = net.Dial("tcp", addr)
-	if err != nil {
+	if peer.connection, err = net.Dial("tcp", addr); err != nil {
 		log.Printf("failed to connect to peer: %s\n", err)
 		return
 	}
