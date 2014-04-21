@@ -48,14 +48,14 @@ func TestEncodeListOfInts(t *testing.T) {
 
 	res := string(Encode(dict))
 	expected := "d8:integersl"
-	expected += "i-128e"
-	expected += "i255e"
-	expected += "i-32768e"
-	expected += "i65535e"
-	expected += "i-2147483648e"
-	expected += "i4294967295e"
-	expected += "i-9223372036854775808e"
-	expected += "i18446744073709551615e"
+	expected += fmt.Sprintf("i%de", math.MinInt8)
+	expected += fmt.Sprintf("i%de", math.MaxUint8)
+	expected += fmt.Sprintf("i%de", math.MinInt16)
+	expected += fmt.Sprintf("i%de", math.MaxUint16)
+	expected += fmt.Sprintf("i%de", math.MinInt32)
+	expected += fmt.Sprintf("i%de", math.MaxUint32)
+	expected += fmt.Sprintf("i%de", math.MinInt64)
+	expected += fmt.Sprintf("i%de", uint64(math.MaxUint64))
 	expected += "i-1e"
 	expected += "i0e"
 	expected += "i1e"
