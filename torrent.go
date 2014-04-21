@@ -150,6 +150,21 @@ func (torrent *Torrent) open(filename string) error {
 
 	// Set files
 	if files, exists := info["files"]; exists {
+		dirName := info["name"].(string)
+		if err := torrent.validatePath(base, dirName); err != nil {
+			return err
+		}
+
+		os.Mkdir(dirName, 0700)
+		if err := os.Chdir(dirName); err != nil {
+			return err
+		}
+		defer os.Chdir("..")
+
+		if base, err = os.Getwd(); err != nil {
+			return err
+		}
+
 		// Multiple files
 		var begin int64
 		for _, v := range files.([]interface{}) {
