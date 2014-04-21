@@ -185,7 +185,7 @@ func (torrent *Torrent) open(filename string) error {
 		}
 
 		var begin int64
-		for _, v := range files.([]interface{}) {
+		for k, v := range files.([]interface{}) {
 			v := v.(map[string]interface{})
 
 			// Set up directory structure
@@ -211,7 +211,7 @@ func (torrent *Torrent) open(filename string) error {
 
 			file, err := os.OpenFile(fullPath, os.O_RDWR, 0600)
 			if err == nil {
-				torrent.findCompletedPieces(file, begin, length)
+				torrent.findCompletedPieces(file, begin, length, k)
 			} else if file, err = os.Create(fullPath); err != nil {
 				return err
 			}
@@ -231,7 +231,7 @@ func (torrent *Torrent) open(filename string) error {
 
 		file, err := os.OpenFile(fileName, os.O_RDWR, 0600)
 		if err == nil {
-			torrent.findCompletedPieces(file, 0, length)
+			torrent.findCompletedPieces(file, 0, length, 0)
 		} else if file, err = os.Create(fileName); err != nil {
 			return err
 		}
@@ -240,8 +240,7 @@ func (torrent *Torrent) open(filename string) error {
 	return nil
 }
 
-func (torrent *Torrent) findCompletedPieces(file *os.File, begin, length int64) {
-	// TODO: check previous file in multifile torrents
+func (torrent *Torrent) findCompletedPieces(file *os.File, begin, length int64, fileIndex int) {
 	if fi, err := file.Stat(); err != nil {
 		return
 	} else if fi.Size() != length {
@@ -258,6 +257,34 @@ func (torrent *Torrent) findCompletedPieces(file *os.File, begin, length int64) 
 
 	fileEnd := begin + length
 	pos := int64(pieceIndex) * torrent.pieceLength
+	if pos > fileEnd {
+		return
+	}
+
+	if pos < begin {
+		bufPos := int64(len(buf)) - (pos + torrent.pieceLength) + begin
+		file.Read(buf[bufPos:])
+		for bufPos != 0 {
+			fileIndex--
+			f := torrent.files[fileIndex]
+
+			if bufPos > f.length {
+				f.handle.Read(buf[bufPos-f.length : bufPos])
+				bufPos -= f.length
+			} else {
+				f.handle.ReadAt(buf[:bufPos], f.length-bufPos)
+				break
+			}
+		}
+
+		if torrent.checkPieceHash(buf, pieceIndex) {
+			torrent.pieces[pieceIndex].busy = true
+			torrent.pieces[pieceIndex].done = true
+			torrent.completedPieces++
+		}
+		pos += torrent.pieceLength
+		pieceIndex++
+	}
 
 	file.Seek(pos-begin, os.SEEK_SET)
 	reader := bufio.NewReaderSize(file, int(torrent.pieceLength))
