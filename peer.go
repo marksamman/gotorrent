@@ -140,9 +140,13 @@ func (peer *Peer) connect() {
 	} else if !bytes.Equal(handshake[28:48], peer.torrent.infoHash) {
 		log.Printf("info hash mismatch from peer: %s\n", addr)
 		return
-	} else if len(peer.id) != 0 && !bytes.Equal(handshake[48:68], []byte(peer.id)) {
-		log.Printf("peer id mismatch from peer: %s\n", addr)
-		return
+	} else if len(peer.id) != 0 {
+		if !bytes.Equal(handshake[48:68], []byte(peer.id)) {
+			log.Printf("peer id mismatch from peer: %s\n", addr)
+			return
+		}
+	} else {
+		peer.id = string(handshake[48:68])
 	}
 
 	peer.requestPieceChannel = make(chan uint32)
