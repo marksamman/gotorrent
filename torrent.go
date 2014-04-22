@@ -35,6 +35,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/marksamman/gotorrent/bencode"
 )
@@ -345,6 +346,7 @@ func (torrent *Torrent) download() error {
 
 	torrent.connectToPeers(resp["peers"])
 
+	trackerIntervalTimer := time.Tick(time.Second * time.Duration(resp["interval"].(int64)))
 	for len(torrent.peers) != 0 || torrent.completedPieces != len(torrent.pieces) {
 		select {
 		case havePieceMessage := <-torrent.havePieceChannel:
@@ -359,6 +361,10 @@ func (torrent *Torrent) download() error {
 			torrent.handleAddPeer(peer)
 		case peer := <-torrent.removePeerChannel:
 			torrent.handleRemovePeer(peer)
+		case <-trackerIntervalTimer:
+			if resp, err := torrent.sendTrackerRequest(nil); err != nil {
+				torrent.connectToPeers(resp["peers"])
+			}
 		}
 	}
 
@@ -375,13 +381,14 @@ func (torrent *Torrent) checkPieceHash(data []byte, pieceIndex uint32) bool {
 
 func (torrent *Torrent) sendTrackerRequest(params map[string]string) (map[string]interface{}, error) {
 	var paramBuf bytes.Buffer
-	for k, v := range params {
-		paramBuf.WriteString(k)
-		paramBuf.WriteByte('=')
-		paramBuf.WriteString(v)
-		paramBuf.WriteByte('&')
+	if params != nil {
+		for k, v := range params {
+			paramBuf.WriteString(k)
+			paramBuf.WriteByte('=')
+			paramBuf.WriteString(v)
+			paramBuf.WriteByte('&')
+		}
 	}
-
 	downloadedBytes := torrent.getDownloadedSize()
 	httpResponse, err := http.Get(fmt.Sprintf("%s?%speer_id=%s&info_hash=%s&left=%d&compact=1&downloaded=%d&uploaded=%d&port=6881",
 		torrent.announceURL, paramBuf.String(),
