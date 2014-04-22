@@ -109,8 +109,8 @@ func (peer *Peer) readN(n int) ([]byte, error) {
 
 func (peer *Peer) connect() {
 	var addr string
-	if peer.ip.To4() != nil {
-		addr = fmt.Sprintf("%s:%d", peer.ip.String(), peer.port)
+	if ip := peer.ip.To4(); ip != nil {
+		addr = fmt.Sprintf("%s:%d", ip.String(), peer.port)
 	} else {
 		addr = fmt.Sprintf("[%s]:%d", peer.ip.String(), peer.port)
 	}
