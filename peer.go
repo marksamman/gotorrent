@@ -360,7 +360,7 @@ func (peer *Peer) sendPieceRequest(index uint32) {
 
 	peer.sendInterested()
 
-	pieceLength := peer.torrent.getPieceLength(int(index))
+	pieceLength := peer.torrent.getPieceLength(index)
 	peer.pieces = append(peer.pieces, &PeerPiece{index, make([]byte, pieceLength), 0, int(math.Ceil(float64(pieceLength) / 16384))})
 	if !peer.remoteChoked {
 		peer.requestPiece(peer.pieces[len(peer.pieces)-1])

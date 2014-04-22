@@ -178,6 +178,11 @@ func (torrent *Torrent) open(filename string) error {
 			return err
 		}
 
+		for _, v := range files.([]interface{}) {
+			v := v.(map[string]interface{})
+			torrent.totalSize += v["length"].(int64)
+		}
+
 		// Multiple files
 		var begin int64
 		for k, v := range files.([]interface{}) {
@@ -203,7 +208,6 @@ func (torrent *Torrent) open(filename string) error {
 			}
 
 			length := v["length"].(int64)
-			torrent.totalSize += length
 
 			file, err := os.OpenFile(fullPath, os.O_RDWR, 0600)
 			if err == nil {
@@ -253,7 +257,8 @@ func (torrent *Torrent) findCompletedPieces(file *os.File, begin, length int64, 
 
 	fileEnd := begin + length
 	pos := int64(pieceIndex) * torrent.pieceLength
-	if pos+torrent.pieceLength > fileEnd {
+	pieceLength := torrent.getPieceLength(pieceIndex)
+	if pos+pieceLength > fileEnd {
 		return
 	}
 
@@ -273,18 +278,18 @@ func (torrent *Torrent) findCompletedPieces(file *os.File, begin, length int64, 
 			}
 		}
 
-		if torrent.checkPieceHash(buf, pieceIndex) {
+		if torrent.checkPieceHash(buf[:pieceLength], pieceIndex) {
 			torrent.pieces[pieceIndex].done = true
 			torrent.completedPieces++
 		}
-		pos += torrent.pieceLength
+		pos += pieceLength
 		pieceIndex++
 	}
 
 	file.Seek(pos-begin, os.SEEK_SET)
-	reader := bufio.NewReaderSize(file, int(torrent.pieceLength))
+	reader := bufio.NewReaderSize(file, int(pieceLength))
 
-	for pos+torrent.pieceLength < fileEnd {
+	for pos+torrent.pieceLength <= fileEnd {
 		reader.Read(buf)
 		if torrent.checkPieceHash(buf, pieceIndex) {
 			torrent.pieces[pieceIndex].done = true
@@ -295,7 +300,7 @@ func (torrent *Torrent) findCompletedPieces(file *os.File, begin, length int64, 
 	}
 
 	if int(pieceIndex) == len(torrent.pieces)-1 {
-		pieceLength := torrent.getLastPieceLength()
+		pieceLength = torrent.getLastPieceLength()
 		reader.Read(buf[:pieceLength])
 		if torrent.checkPieceHash(buf[:pieceLength], pieceIndex) {
 			torrent.pieces[pieceIndex].done = true
@@ -384,8 +389,8 @@ func (torrent *Torrent) sendTrackerRequest(params map[string]string) (map[string
 	return resp, nil
 }
 
-func (torrent *Torrent) getPieceLength(pieceIndex int) int64 {
-	if pieceIndex == len(torrent.pieces)-1 {
+func (torrent *Torrent) getPieceLength(pieceIndex uint32) int64 {
+	if pieceIndex == uint32(len(torrent.pieces))-1 {
 		if res := torrent.totalSize % torrent.pieceLength; res != 0 {
 			return res
 		}
@@ -404,7 +409,7 @@ func (torrent *Torrent) getDownloadedSize() int64 {
 	var downloadedSize int64
 	for k := range torrent.pieces {
 		if torrent.pieces[k].done {
-			downloadedSize += torrent.getPieceLength(k)
+			downloadedSize += torrent.getPieceLength(uint32(k))
 		}
 	}
 	return downloadedSize
@@ -627,7 +632,7 @@ func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequ
 	}
 
 	end := int64(blockRequestMessage.begin) + int64(blockRequestMessage.length)
-	if end >= torrent.getPieceLength(int(blockRequestMessage.index)) {
+	if end >= torrent.getPieceLength(blockRequestMessage.index) {
 		close(blockRequestMessage.from.done)
 		return
 	}
