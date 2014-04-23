@@ -37,7 +37,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/marksamman/gotorrent/bencode"
+	"github.com/marksamman/bencode"
 )
 
 type Torrent struct {
