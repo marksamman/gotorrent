@@ -525,17 +525,19 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 			break
 		}
 
-		if beginPos < file.begin+file.length {
-			amountWrite := (file.begin + file.length) - beginPos
-			if amountWrite > int64(len(pieceMessage.data)) {
-				amountWrite = int64(len(pieceMessage.data))
-			}
-
-			file.handle.WriteAt(pieceMessage.data[:amountWrite], beginPos-file.begin)
-			pieceMessage.data = pieceMessage.data[amountWrite:]
-
-			beginPos += amountWrite
+		if beginPos >= file.begin+file.length {
+			continue
 		}
+
+		amountWrite := (file.begin + file.length) - beginPos
+		if amountWrite > int64(len(pieceMessage.data)) {
+			amountWrite = int64(len(pieceMessage.data))
+		}
+
+		file.handle.WriteAt(pieceMessage.data[:amountWrite], beginPos-file.begin)
+		pieceMessage.data = pieceMessage.data[amountWrite:]
+
+		beginPos += amountWrite
 	}
 
 	for _, peer := range torrent.peers {
@@ -561,10 +563,12 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 		// End game
 		incompletePiecesMap := make(map[*Peer][]uint32)
 		for k := range torrent.pieces {
-			if !torrent.pieces[k].done {
-				for _, peer := range torrent.pieces[k].peers {
-					incompletePiecesMap[peer] = append(incompletePiecesMap[peer], uint32(k))
-				}
+			if torrent.pieces[k].done {
+				continue
+			}
+
+			for _, peer := range torrent.pieces[k].peers {
+				incompletePiecesMap[peer] = append(incompletePiecesMap[peer], uint32(k))
 			}
 		}
 
@@ -598,26 +602,30 @@ func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
 			continue
 		}
 
-		for _, p := range torrent.peers {
-			if p == peer {
-				torrent.pieces[k].busy = true
-				go func() {
-					peer.requestPieceChannel <- uint32(k)
-				}()
-				return
+		for _, p := range torrent.pieces[k].peers {
+			if p != peer {
+				continue
 			}
+
+			torrent.pieces[k].busy = true
+			go func() {
+				peer.requestPieceChannel <- uint32(k)
+			}()
+			return
 		}
 	}
 
 	// Help with incomplete pieces
 	for _, v := range incomplete {
 		for _, p := range torrent.pieces[v].peers {
-			if p == peer {
-				go func() {
-					peer.requestPieceChannel <- uint32(v)
-				}()
-				return
+			if p != peer {
+				continue
 			}
+
+			go func() {
+				peer.requestPieceChannel <- uint32(v)
+			}()
+			return
 		}
 	}
 }
@@ -631,10 +639,12 @@ func (torrent *Torrent) handleRemovePeer(peer *Peer) {
 	delete(torrent.peers, peer.id)
 	for k := range torrent.pieces {
 		for idx, v := range torrent.pieces[k].peers {
-			if v == peer {
-				torrent.pieces[k].peers = append(torrent.pieces[k].peers[:idx], torrent.pieces[k].peers[idx+1:]...)
-				break
+			if v != peer {
+				continue
 			}
+
+			torrent.pieces[k].peers = append(torrent.pieces[k].peers[:idx], torrent.pieces[k].peers[idx+1:]...)
+			break
 		}
 	}
 	fmt.Printf("[%s] %d active peers\n", torrent.name, len(torrent.peers))
@@ -662,25 +672,29 @@ func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequ
 	fileOffset := int64(blockRequestMessage.index)*torrent.pieceLength + int64(blockRequestMessage.begin)
 	for k := range torrent.files {
 		file := &torrent.files[k]
-		if fileOffset+pos < file.begin {
+
+		cursor := fileOffset + pos
+		if cursor < file.begin {
 			break
 		}
 
-		if fileOffset+pos < file.begin+file.length {
-			n := (file.begin + file.length) - (fileOffset + pos)
-			if n > int64(blockRequestMessage.length)-pos {
-				n = int64(blockRequestMessage.length) - pos
-			}
+		if cursor >= file.begin+file.length {
+			continue
+		}
 
-			file.handle.Seek((fileOffset+pos)-file.begin, os.SEEK_SET)
-			end := pos + n
-			for pos < end {
-				count, err := file.handle.Read(block[pos:end])
-				if err != nil {
-					return
-				}
-				pos += int64(count)
+		n := (file.begin + file.length) - cursor
+		if n > int64(blockRequestMessage.length)-pos {
+			n = int64(blockRequestMessage.length) - pos
+		}
+
+		file.handle.Seek(cursor-file.begin, os.SEEK_SET)
+		end := pos + n
+		for pos < end {
+			count, err := file.handle.Read(block[pos:end])
+			if err != nil {
+				return
 			}
+			pos += int64(count)
 		}
 	}
 
