@@ -446,12 +446,12 @@ func (torrent *Torrent) connectToPeers(peers interface{}) {
 	switch peers.(type) {
 	case string:
 		peers := peers.(string)
-        for i := 0; i < len(peers); i += 6 {
-            peer := NewPeer(torrent)
-            peer.ip = net.IPv4(peers[i], peers[i+1], peers[i+2], peers[i+3])
-            peer.port = binary.BigEndian.Uint16([]byte(peers[i+4:]))
-            go peer.connect()
-        }
+		for i := 0; i < len(peers); i += 6 {
+			peer := NewPeer(torrent)
+			peer.ip = net.IPv4(peers[i], peers[i+1], peers[i+2], peers[i+3])
+			peer.port = binary.BigEndian.Uint16([]byte(peers[i+4:]))
+			go peer.connect()
+		}
 	case []interface{}:
 		for _, dict := range peers.([]interface{}) {
 			dict := dict.(map[string]interface{})
@@ -586,7 +586,7 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
 	incomplete := []int{}
 	for k := range torrent.pieces {
-        piece := &torrent.pieces[k]
+		piece := &torrent.pieces[k]
 		if piece.done {
 			continue
 		}

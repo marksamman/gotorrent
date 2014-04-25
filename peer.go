@@ -264,9 +264,9 @@ func (peer *Peer) processMessage(packet *Packet) error {
 			return errors.New("peer sent request while choked")
 		}
 
-        index := binary.BigEndian.Uint32(packet.payload)
-        begin := binary.BigEndian.Uint32(packet.payload[4:])
-        length := binary.BigEndian.Uint32(packet.payload[8:])
+		index := binary.BigEndian.Uint32(packet.payload)
+		begin := binary.BigEndian.Uint32(packet.payload[4:])
+		length := binary.BigEndian.Uint32(packet.payload[8:])
 		if length > 32768 {
 			return errors.New("peer requested length over 32KB")
 		}
@@ -276,7 +276,7 @@ func (peer *Peer) processMessage(packet *Packet) error {
 			return errors.New("length of piece packet must be at least 10")
 		}
 
-        index := binary.BigEndian.Uint32(packet.payload)
+		index := binary.BigEndian.Uint32(packet.payload)
 		piece, idx := peer.getPeerPiece(index)
 		if piece == nil {
 			return errors.New("received index we didn't ask for")
@@ -302,12 +302,12 @@ func (peer *Peer) processMessage(packet *Packet) error {
 			return errors.New("length of cancel packet must be 13")
 		}
 
-        // TODO: Handle cancel
-        /*
-        index := binary.BigEndian.Uint32(packet.payload)
-        begin := binary.BigEndian.Uint32(packet.payload[4:])
-        length := binary.BigEndian.Uint32(packet.payload[8:])
-        */
+		// TODO: Handle cancel
+		/*
+		   index := binary.BigEndian.Uint32(packet.payload)
+		   begin := binary.BigEndian.Uint32(packet.payload[4:])
+		   length := binary.BigEndian.Uint32(packet.payload[8:])
+		*/
 	case Port:
 		if packet.length != 3 {
 			return errors.New("length of port packet must be 3")
@@ -329,12 +329,12 @@ func (peer *Peer) sendInterested() {
 }
 
 func (peer *Peer) sendRequest(index, begin, length uint32) {
-    packet := make([]byte, 17)
-    binary.BigEndian.PutUint32(packet, 13) // Length
-    packet[4] = Request
-    binary.BigEndian.PutUint32(packet[5:], index)
-    binary.BigEndian.PutUint32(packet[9:], begin)
-    binary.BigEndian.PutUint32(packet[13:], length)
+	packet := make([]byte, 17)
+	binary.BigEndian.PutUint32(packet, 13) // Length
+	packet[4] = Request
+	binary.BigEndian.PutUint32(packet[5:], index)
+	binary.BigEndian.PutUint32(packet[9:], begin)
+	binary.BigEndian.PutUint32(packet[13:], length)
 	peer.connection.Write(packet)
 }
 
