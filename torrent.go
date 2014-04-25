@@ -632,12 +632,13 @@ func (torrent *Torrent) handleAddPeer(peer *Peer) {
 func (torrent *Torrent) handleRemovePeer(peer *Peer) {
 	delete(torrent.peers, peer.id)
 	for k := range torrent.pieces {
-		for idx, v := range torrent.pieces[k].peers {
+		piece := &torrent.pieces[k]
+		for idx, v := range piece.peers {
 			if v != peer {
 				continue
 			}
 
-			torrent.pieces[k].peers = append(torrent.pieces[k].peers[:idx], torrent.pieces[k].peers[idx+1:]...)
+			piece.peers = append(piece.peers[:idx], piece.peers[idx+1:]...)
 			break
 		}
 	}
@@ -672,11 +673,12 @@ func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequ
 			break
 		}
 
-		if cursor >= file.begin+file.length {
+		fileEnd := file.begin + file.length
+		if cursor >= fileEnd {
 			continue
 		}
 
-		n := (file.begin + file.length) - cursor
+		n := fileEnd - cursor
 		if n > int64(blockRequestMessage.length)-pos {
 			n = int64(blockRequestMessage.length) - pos
 		}

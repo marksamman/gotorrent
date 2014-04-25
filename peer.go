@@ -373,19 +373,21 @@ func (peer *Peer) requestPiece(piece *PeerPiece) {
 }
 
 func (peer *Peer) sendPieceBlockMessage(blockMessage *BlockMessage) {
-	var packet bytes.Buffer
-	binary.Write(&packet, binary.BigEndian, uint32(9+len(blockMessage.block)))
-	packet.WriteByte(PieceBlock)
-	binary.Write(&packet, binary.BigEndian, blockMessage.index)
-	binary.Write(&packet, binary.BigEndian, blockMessage.begin)
-	packet.Write(blockMessage.block)
-	peer.connection.Write(packet.Bytes())
+	packet := make([]byte, 13)
+	binary.BigEndian.PutUint32(packet, uint32(9+len(blockMessage.block)))
+	packet[4] = PieceBlock
+	binary.BigEndian.PutUint32(packet[5:], blockMessage.index)
+	binary.BigEndian.PutUint32(packet[9:], blockMessage.begin)
+	peer.connection.Write(packet)
+	peer.connection.Write(blockMessage.block)
 }
 
 func (peer *Peer) sendHaveMessage(pieceIndex uint32) {
-	packet := bytes.NewBuffer([]byte{0, 0, 0, 5, Have})
-	binary.Write(packet, binary.BigEndian, pieceIndex)
-	peer.connection.Write(packet.Bytes())
+	packet := make([]byte, 9)
+	packet[3] = 5 // Length
+	packet[4] = Have
+	binary.BigEndian.PutUint32(packet[5:], pieceIndex)
+	peer.connection.Write(packet)
 }
 
 func (peer *Peer) sendUnchokeMessage() {
