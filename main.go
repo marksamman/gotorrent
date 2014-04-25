@@ -38,6 +38,24 @@ type Client struct {
 }
 
 var client Client
+var fileWriterChannel chan *FileWriterMessage
+
+type FileWriterMessage struct {
+	file    *os.File
+	offset  int64
+	data    []byte
+	torrent *Torrent
+}
+
+func fileWriterListener() {
+	for {
+		message := <-fileWriterChannel
+		message.file.WriteAt(message.data, message.offset)
+		go func() {
+			message.torrent.fileWriteDone <- struct{}{}
+		}()
+	}
+}
 
 func main() {
 	torrentCount := len(os.Args) - 1
@@ -72,6 +90,9 @@ func main() {
 		fmt.Printf("Downloaded: %.2f MB (%.2f%%)\n", float64(torrent.getDownloadedSize()/1024/1024), float64(torrent.completedPieces)*100/float64(len(torrent.pieces)))
 		client.torrents = append(client.torrents, &torrent)
 	}
+
+	fileWriterChannel = make(chan *FileWriterMessage)
+	go fileWriterListener()
 
 	var group sync.WaitGroup
 	group.Add(len(client.torrents))

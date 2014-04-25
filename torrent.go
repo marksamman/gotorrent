@@ -47,20 +47,22 @@ type Torrent struct {
 	pieceLength int64
 	totalSize   int64
 
-	infoHash        []byte
-	peers           map[string]*Peer
-	handshake       []byte
-	files           []File
-	pieces          []TorrentPiece
-	completedPieces int
-	uploadedBytes   uint32
+	peers             map[string]*Peer
+	handshake         []byte
+	files             []File
+	pieces            []TorrentPiece
+	completedPieces   int
+	uploadedBytes     uint32
+	pendingFileWrites int
 
-	pieceChannel        chan PieceMessage
-	bitfieldChannel     chan BitfieldMessage
-	havePieceChannel    chan HavePieceMessage
+	pieceChannel        chan *PieceMessage
+	bitfieldChannel     chan *BitfieldMessage
+	havePieceChannel    chan *HavePieceMessage
 	addPeerChannel      chan *Peer
 	removePeerChannel   chan *Peer
-	blockRequestChannel chan BlockRequestMessage
+	blockRequestChannel chan *BlockRequestMessage
+
+	fileWriteDone chan struct{}
 }
 
 type TorrentPiece struct {
@@ -133,14 +135,13 @@ func (torrent *Torrent) open(filename string) error {
 	// Set info hash
 	hasher := sha1.New()
 	hasher.Write(bencode.Encode(info))
-	torrent.infoHash = hasher.Sum(nil)
 
 	// Set handshake
 	var buffer bytes.Buffer
 	buffer.WriteByte(19) // length of the string "BitTorrent Protocol"
 	buffer.WriteString("BitTorrent protocol")
 	buffer.WriteString("\x00\x00\x00\x00\x00\x00\x00\x00") // reserved
-	buffer.Write(torrent.infoHash)
+	buffer.Write(hasher.Sum(nil))
 	buffer.Write(client.peerID)
 	torrent.handshake = buffer.Bytes()
 
@@ -336,30 +337,33 @@ func (torrent *Torrent) download() error {
 		return err
 	}
 
-	torrent.pieceChannel = make(chan PieceMessage)
-	torrent.bitfieldChannel = make(chan BitfieldMessage)
-	torrent.havePieceChannel = make(chan HavePieceMessage)
+	torrent.pieceChannel = make(chan *PieceMessage)
+	torrent.bitfieldChannel = make(chan *BitfieldMessage)
+	torrent.havePieceChannel = make(chan *HavePieceMessage)
 	torrent.addPeerChannel = make(chan *Peer)
 	torrent.removePeerChannel = make(chan *Peer)
 	torrent.peers = make(map[string]*Peer)
+	torrent.fileWriteDone = make(chan struct{})
 
 	torrent.connectToPeers(resp["peers"])
 
 	trackerIntervalTimer := time.Tick(time.Second * time.Duration(resp["interval"].(int64)))
-	for len(torrent.peers) != 0 || torrent.completedPieces != len(torrent.pieces) {
+	for torrent.completedPieces != len(torrent.pieces) {
 		select {
 		case havePieceMessage := <-torrent.havePieceChannel:
-			torrent.handleHaveMessage(&havePieceMessage)
+			torrent.handleHaveMessage(havePieceMessage)
 		case bitfieldMessage := <-torrent.bitfieldChannel:
-			torrent.handleBitfieldMessage(&bitfieldMessage)
+			torrent.handleBitfieldMessage(bitfieldMessage)
 		case pieceMessage := <-torrent.pieceChannel:
-			torrent.handlePieceMessage(&pieceMessage)
+			torrent.handlePieceMessage(pieceMessage)
 		case blockRequestMessage := <-torrent.blockRequestChannel:
-			torrent.handleBlockRequestMessage(&blockRequestMessage)
+			torrent.handleBlockRequestMessage(blockRequestMessage)
 		case peer := <-torrent.addPeerChannel:
 			torrent.handleAddPeer(peer)
 		case peer := <-torrent.removePeerChannel:
 			torrent.handleRemovePeer(peer)
+		case <-torrent.fileWriteDone:
+			torrent.pendingFileWrites--
 		case <-trackerIntervalTimer:
 			if resp, err := torrent.sendTrackerRequest(nil); err != nil {
 				torrent.connectToPeers(resp["peers"])
@@ -367,6 +371,21 @@ func (torrent *Torrent) download() error {
 		}
 	}
 
+	for torrent.pendingFileWrites != 0 {
+		<-torrent.fileWriteDone
+		torrent.pendingFileWrites--
+	}
+
+	for _, peer := range torrent.peers {
+		close(peer.done)
+	}
+
+	for k := range torrent.files {
+		torrent.files[k].handle.Close()
+	}
+
+	params["event"] = "completed"
+	torrent.sendTrackerRequest(params)
 	params["event"] = "stopped"
 	torrent.sendTrackerRequest(params)
 	return nil
@@ -392,7 +411,7 @@ func (torrent *Torrent) sendTrackerRequest(params map[string]string) (map[string
 	httpResponse, err := http.Get(fmt.Sprintf("%s?%speer_id=%s&info_hash=%s&left=%d&compact=1&downloaded=%d&uploaded=%d&port=6881",
 		torrent.announceURL, paramBuf.String(),
 		url.QueryEscape(string(client.peerID)),
-		url.QueryEscape(string(torrent.infoHash)),
+		url.QueryEscape(string(torrent.getInfoHash())),
 		torrent.totalSize-downloadedBytes,
 		downloadedBytes, torrent.uploadedBytes))
 	if err != nil {
@@ -511,6 +530,9 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 
 	torrent.pieces[pieceMessage.index].done = true
 	torrent.completedPieces++
+	if torrent.completedPieces != len(torrent.pieces) {
+		torrent.requestPieceFromPeer(pieceMessage.from)
+	}
 
 	beginPos := int64(pieceMessage.index) * torrent.pieceLength
 	for k := range torrent.files {
@@ -529,9 +551,11 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 			amountWrite = int64(len(pieceMessage.data))
 		}
 
-		file.handle.WriteAt(pieceMessage.data[:amountWrite], beginPos-file.begin)
+		torrent.pendingFileWrites++
+		go func(handle *os.File, offset int64, data []byte) {
+			fileWriterChannel <- &FileWriterMessage{handle, offset, data, torrent}
+		}(file.handle, beginPos-file.begin, pieceMessage.data[:amountWrite])
 		pieceMessage.data = pieceMessage.data[amountWrite:]
-
 		beginPos += amountWrite
 	}
 
@@ -542,21 +566,6 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 	}
 
 	fmt.Printf("[%s] Downloaded: %.2f%c\n", torrent.name, float64(torrent.completedPieces)*100/float64(len(torrent.pieces)), '%')
-	if torrent.completedPieces == len(torrent.pieces) {
-		for k := range torrent.files {
-			torrent.files[k].handle.Close()
-		}
-
-		for _, peer := range torrent.peers {
-			close(peer.done)
-		}
-
-		params := make(map[string]string)
-		params["event"] = "completed"
-		torrent.sendTrackerRequest(params)
-	} else {
-		torrent.requestPieceFromPeer(pieceMessage.from)
-	}
 }
 
 func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
@@ -654,9 +663,13 @@ func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequ
 	}
 
 	torrent.uploadedBytes += blockRequestMessage.length
-	blockRequestMessage.from.sendPieceBlockChannel <- BlockMessage{
+	blockRequestMessage.from.sendPieceBlockChannel <- &BlockMessage{
 		blockRequestMessage.index,
 		blockRequestMessage.begin,
 		block,
 	}
+}
+
+func (torrent *Torrent) getInfoHash() []byte {
+	return torrent.handshake[28:48]
 }

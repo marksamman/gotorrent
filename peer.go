@@ -59,7 +59,7 @@ type Peer struct {
 	localInterested  bool
 
 	requestPieceChannel   chan uint32
-	sendPieceBlockChannel chan BlockMessage
+	sendPieceBlockChannel chan *BlockMessage
 	sendHaveChannel       chan uint32
 	done                  chan struct{}
 
@@ -138,7 +138,7 @@ func (peer *Peer) connect() {
 	} else if !bytes.Equal(handshake[0:20], []byte("\x13BitTorrent protocol")) {
 		log.Printf("bad protocol from peer: %s\n", addr)
 		return
-	} else if !bytes.Equal(handshake[28:48], peer.torrent.infoHash) {
+	} else if !bytes.Equal(handshake[28:48], peer.torrent.getInfoHash()) {
 		log.Printf("info hash mismatch from peer: %s\n", addr)
 		return
 	} else if len(peer.id) != 0 {
@@ -151,7 +151,7 @@ func (peer *Peer) connect() {
 	}
 
 	peer.requestPieceChannel = make(chan uint32)
-	peer.sendPieceBlockChannel = make(chan BlockMessage)
+	peer.sendPieceBlockChannel = make(chan *BlockMessage)
 	peer.sendHaveChannel = make(chan uint32)
 	peer.done = make(chan struct{})
 	peer.pieces = make(map[uint32]struct{})
@@ -161,7 +161,7 @@ func (peer *Peer) connect() {
 		peer.torrent.removePeerChannel <- peer
 	}()
 
-	packetChannel := make(chan Packet)
+	packetChannel := make(chan *Packet)
 	errorChannel := make(chan error)
 
 	go peer.receiver(packetChannel, errorChannel)
@@ -170,11 +170,11 @@ func (peer *Peer) connect() {
 		case pieceIndex := <-peer.requestPieceChannel:
 			peer.sendPieceRequest(pieceIndex)
 		case blockMessage := <-peer.sendPieceBlockChannel:
-			peer.sendPieceBlockMessage(&blockMessage)
+			peer.sendPieceBlockMessage(blockMessage)
 		case pieceIndex := <-peer.sendHaveChannel:
 			peer.sendHaveMessage(pieceIndex)
 		case packet := <-packetChannel:
-			if err := peer.processMessage(&packet); err != nil {
+			if err := peer.processMessage(packet); err != nil {
 				log.Printf("error while processing message in peer %s: %s", addr, err)
 				return
 			}
@@ -187,7 +187,7 @@ func (peer *Peer) connect() {
 	}
 }
 
-func (peer *Peer) receiver(packetChannel chan Packet, errorChannel chan error) {
+func (peer *Peer) receiver(packetChannel chan *Packet, errorChannel chan error) {
 	for {
 		lengthHeader, err := peer.readN(4)
 		if err != nil {
@@ -207,7 +207,7 @@ func (peer *Peer) receiver(packetChannel chan Packet, errorChannel chan error) {
 			continue
 		}
 
-		packetChannel <- Packet{length, data[0], data[1:]}
+		packetChannel <- &Packet{length, data[0], data[1:]}
 	}
 }
 
@@ -247,12 +247,12 @@ func (peer *Peer) processMessage(packet *Packet) error {
 		}
 
 		index := binary.BigEndian.Uint32(packet.payload)
-		peer.torrent.havePieceChannel <- HavePieceMessage{peer, index}
+		peer.torrent.havePieceChannel <- &HavePieceMessage{peer, index}
 	case Bitfield:
 		if packet.length < 2 {
 			return errors.New("length of bitfield packet must be at least 2")
 		}
-		peer.torrent.bitfieldChannel <- BitfieldMessage{peer, packet.payload}
+		peer.torrent.bitfieldChannel <- &BitfieldMessage{peer, packet.payload}
 	case Request:
 		if packet.length != 13 {
 			return errors.New("length of request packet must be 13")
@@ -272,7 +272,7 @@ func (peer *Peer) processMessage(packet *Packet) error {
 		if length > 32768 {
 			return errors.New("peer requested length over 32KB")
 		}
-		peer.torrent.blockRequestChannel <- BlockRequestMessage{peer, index, begin, length}
+		peer.torrent.blockRequestChannel <- &BlockRequestMessage{peer, index, begin, length}
 	case PieceBlock:
 		if packet.length < 10 {
 			return errors.New("length of piece packet must be at least 10")
@@ -294,7 +294,7 @@ func (peer *Peer) processMessage(packet *Packet) error {
 
 		if piece.writes == piece.reqWrites {
 			// Send piece to Torrent
-			peer.torrent.pieceChannel <- PieceMessage{peer, index, piece.data}
+			peer.torrent.pieceChannel <- &PieceMessage{peer, index, piece.data}
 
 			// Remove piece from peer
 			peer.queue = append(peer.queue[:idx], peer.queue[idx+1:]...)
