@@ -29,7 +29,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -64,10 +64,9 @@ type Torrent struct {
 }
 
 type TorrentPiece struct {
-	peers []*Peer
-	hash  string
-	busy  bool
-	done  bool
+	done     bool
+	busyness int
+	hash     string
 }
 
 type File struct {
@@ -148,7 +147,7 @@ func (torrent *Torrent) open(filename string) error {
 	// Set pieces
 	pieces := info["pieces"].(string)
 	for i := 0; i < len(pieces); i += 20 {
-		torrent.pieces = append(torrent.pieces, TorrentPiece{[]*Peer{}, pieces[i : i+20], false, false})
+		torrent.pieces = append(torrent.pieces, TorrentPiece{false, 0, pieces[i : i+20]})
 	}
 
 	os.Mkdir("Downloads", 0700)
@@ -471,31 +470,33 @@ func (torrent *Torrent) connectToPeers(peers interface{}) {
 }
 
 func (torrent *Torrent) handleHaveMessage(havePieceMessage *HavePieceMessage) {
-	index := havePieceMessage.index
-	torrent.pieces[index].peers = append(torrent.pieces[index].peers, havePieceMessage.from)
-
-	// torrent.requestPieceFromPeer(havePieceMessage.from)
+	havePieceMessage.from.pieces[havePieceMessage.index] = struct{}{}
+	// torrent.requestPieceFromPeer(peer)
 }
 
 func (torrent *Torrent) handleBitfieldMessage(bitfieldMessage *BitfieldMessage) {
-	index := -1
+	peer := bitfieldMessage.from
+	piecesLen := uint32(len(torrent.pieces))
+
+	var index uint32
 	for i := 0; i < len(bitfieldMessage.data); i++ {
 		b := bitfieldMessage.data[i]
 		for v := byte(128); v != 0; v >>= 1 {
-			index++
 			if b&v != v {
+				index++
 				continue
 			}
 
-			if index >= len(torrent.pieces) {
+			if index >= piecesLen {
 				break
 			}
 
-			torrent.pieces[index].peers = append(torrent.pieces[index].peers, bitfieldMessage.from)
+			peer.pieces[index] = struct{}{}
+			index++
 		}
 	}
 
-	torrent.requestPieceFromPeer(bitfieldMessage.from)
+	torrent.requestPieceFromPeer(peer)
 }
 
 func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
@@ -518,11 +519,12 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 			break
 		}
 
-		if beginPos >= file.begin+file.length {
+		fileEnd := file.begin + file.length
+		if beginPos >= fileEnd {
 			continue
 		}
 
-		amountWrite := (file.begin + file.length) - beginPos
+		amountWrite := fileEnd - beginPos
 		if amountWrite > int64(len(pieceMessage.data)) {
 			amountWrite = int64(len(pieceMessage.data))
 		}
@@ -558,43 +560,37 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 }
 
 func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
-	incomplete := []int{}
-	for k := range torrent.pieces {
-		piece := &torrent.pieces[k]
+	// Find the least busy piece that the peer claims to have
+
+	busyness := math.MaxInt32
+	var pieceIndex uint32
+
+	pieces := uint32(len(torrent.pieces))
+	for i := uint32(0); i < pieces; i++ {
+		piece := &torrent.pieces[i]
 		if piece.done {
 			continue
 		}
 
-		if piece.busy {
-			incomplete = append(incomplete, k)
-			continue
-		}
-
-		for _, p := range piece.peers {
-			if p != peer {
-				continue
+		if _, ok := peer.pieces[i]; ok {
+			if piece.busyness == 0 {
+				piece.busyness = 1
+				go func() {
+					peer.requestPieceChannel <- i
+				}()
+				return
+			} else if busyness > piece.busyness {
+				busyness = piece.busyness
+				pieceIndex = i
 			}
-
-			piece.busy = true
-			go func() {
-				peer.requestPieceChannel <- uint32(k)
-			}()
-			return
 		}
 	}
 
-	// Help with incomplete pieces
-	for _, v := range incomplete {
-		for _, p := range torrent.pieces[v].peers {
-			if p != peer {
-				continue
-			}
-
-			go func() {
-				peer.requestPieceChannel <- uint32(v)
-			}()
-			return
-		}
+	if busyness != math.MaxInt32 {
+		torrent.pieces[pieceIndex].busyness++
+		go func() {
+			peer.requestPieceChannel <- pieceIndex
+		}()
 	}
 }
 
@@ -605,17 +601,6 @@ func (torrent *Torrent) handleAddPeer(peer *Peer) {
 
 func (torrent *Torrent) handleRemovePeer(peer *Peer) {
 	delete(torrent.peers, peer.id)
-	for k := range torrent.pieces {
-		piece := &torrent.pieces[k]
-		for idx, v := range piece.peers {
-			if v != peer {
-				continue
-			}
-
-			piece.peers = append(piece.peers[:idx], piece.peers[idx+1:]...)
-			break
-		}
-	}
 	fmt.Printf("[%s] %d active peers\n", torrent.name, len(torrent.peers))
 }
 
