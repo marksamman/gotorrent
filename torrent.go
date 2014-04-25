@@ -552,32 +552,6 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 		params := make(map[string]string)
 		params["event"] = "completed"
 		torrent.sendTrackerRequest(params)
-	} else if torrent.completedPieces == len(torrent.pieces)-8 {
-		// End game
-		incompletePiecesMap := make(map[*Peer][]uint32)
-		for k := range torrent.pieces {
-			if torrent.pieces[k].done {
-				continue
-			}
-
-			for _, peer := range torrent.pieces[k].peers {
-				incompletePiecesMap[peer] = append(incompletePiecesMap[peer], uint32(k))
-			}
-		}
-
-		for peer, v := range incompletePiecesMap {
-			// shuffle pieces
-			for i := 0; i < len(v); i++ {
-				j := rand.Intn(i + 1)
-				v[i], v[j] = v[j], v[i]
-			}
-
-			go func(pieces []uint32, p *Peer) {
-				for _, idx := range pieces {
-					p.requestPieceChannel <- idx
-				}
-			}(v, peer)
-		}
 	} else {
 		torrent.requestPieceFromPeer(pieceMessage.from)
 	}
