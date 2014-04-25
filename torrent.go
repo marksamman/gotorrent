@@ -445,20 +445,13 @@ func (torrent *Torrent) getDownloadedSize() int64 {
 func (torrent *Torrent) connectToPeers(peers interface{}) {
 	switch peers.(type) {
 	case string:
-		buf := bytes.NewBufferString(peers.(string))
-		ipBuf := make([]byte, 4)
-		for buf.Len() >= 6 {
-			peer := NewPeer(torrent)
-
-			// 4 bytes IPv4-address
-			buf.Read(ipBuf)
-			peer.ip = net.IPv4(ipBuf[0], ipBuf[1], ipBuf[2], ipBuf[3])
-
-			// 2 bytes port
-			binary.Read(buf, binary.BigEndian, &peer.port)
-
-			go peer.connect()
-		}
+		peers := peers.(string)
+        for i := 0; i < len(peers); i += 6 {
+            peer := NewPeer(torrent)
+            peer.ip = net.IPv4(peers[i], peers[i+1], peers[i+2], peers[i+3])
+            peer.port = binary.BigEndian.Uint16([]byte(peers[i+4:]))
+            go peer.connect()
+        }
 	case []interface{}:
 		for _, dict := range peers.([]interface{}) {
 			dict := dict.(map[string]interface{})
@@ -593,21 +586,22 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
 	incomplete := []int{}
 	for k := range torrent.pieces {
-		if torrent.pieces[k].done {
+        piece := &torrent.pieces[k]
+		if piece.done {
 			continue
 		}
 
-		if torrent.pieces[k].busy {
+		if piece.busy {
 			incomplete = append(incomplete, k)
 			continue
 		}
 
-		for _, p := range torrent.pieces[k].peers {
+		for _, p := range piece.peers {
 			if p != peer {
 				continue
 			}
 
-			torrent.pieces[k].busy = true
+			piece.busy = true
 			go func() {
 				peer.requestPieceChannel <- uint32(k)
 			}()

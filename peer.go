@@ -74,7 +74,7 @@ type PeerPiece struct {
 
 type Packet struct {
 	length      uint32
-	messageType int
+	messageType byte
 	payload     []byte
 }
 
@@ -193,8 +193,7 @@ func (peer *Peer) receiver(packetChannel chan Packet, errorChannel chan error) {
 			return
 		}
 
-		var length uint32
-		binary.Read(bytes.NewBuffer(lengthHeader), binary.BigEndian, &length)
+		length := binary.BigEndian.Uint32(lengthHeader)
 		if length == 0 {
 			// keep-alive
 			continue
@@ -206,7 +205,7 @@ func (peer *Peer) receiver(packetChannel chan Packet, errorChannel chan error) {
 			continue
 		}
 
-		packetChannel <- Packet{length, int(data[0]), data[1:]}
+		packetChannel <- Packet{length, data[0], data[1:]}
 	}
 }
 
@@ -245,8 +244,7 @@ func (peer *Peer) processMessage(packet *Packet) error {
 			return errors.New("length of have packet must be 5")
 		}
 
-		var index uint32
-		binary.Read(bytes.NewBuffer(packet.payload), binary.BigEndian, &index)
+		index := binary.BigEndian.Uint32(packet.payload)
 		peer.torrent.havePieceChannel <- HavePieceMessage{peer, index}
 	case Bitfield:
 		if packet.length < 2 {
@@ -266,11 +264,9 @@ func (peer *Peer) processMessage(packet *Packet) error {
 			return errors.New("peer sent request while choked")
 		}
 
-		buf := bytes.NewBuffer(packet.payload)
-		var index, begin, length uint32
-		binary.Read(buf, binary.BigEndian, &index)
-		binary.Read(buf, binary.BigEndian, &begin)
-		binary.Read(buf, binary.BigEndian, &length)
+        index := binary.BigEndian.Uint32(packet.payload)
+        begin := binary.BigEndian.Uint32(packet.payload[4:])
+        length := binary.BigEndian.Uint32(packet.payload[8:])
 		if length > 32768 {
 			return errors.New("peer requested length over 32KB")
 		}
@@ -280,18 +276,13 @@ func (peer *Peer) processMessage(packet *Packet) error {
 			return errors.New("length of piece packet must be at least 10")
 		}
 
-		var index, begin uint32
-
-		buf := bytes.NewBuffer(packet.payload)
-		binary.Read(buf, binary.BigEndian, &index)
-
+        index := binary.BigEndian.Uint32(packet.payload)
 		piece, idx := peer.getPeerPiece(index)
 		if piece == nil {
 			return errors.New("received index we didn't ask for")
 		}
 
-		binary.Read(buf, binary.BigEndian, &begin)
-
+		begin := binary.BigEndian.Uint32(packet.payload[4:])
 		if int64(begin)+int64(packet.length)-9 > int64(len(piece.data)) {
 			return errors.New("begin+length exceeds length of data buffer")
 		}
@@ -311,19 +302,18 @@ func (peer *Peer) processMessage(packet *Packet) error {
 			return errors.New("length of cancel packet must be 13")
 		}
 
-		buf := bytes.NewBuffer(packet.payload)
-		var index, begin, length uint32
-		binary.Read(buf, binary.BigEndian, &index)
-		binary.Read(buf, binary.BigEndian, &begin)
-		binary.Read(buf, binary.BigEndian, &length)
-		// TODO: Handle cancel
+        // TODO: Handle cancel
+        /*
+        index := binary.BigEndian.Uint32(packet.payload)
+        begin := binary.BigEndian.Uint32(packet.payload[4:])
+        length := binary.BigEndian.Uint32(packet.payload[8:])
+        */
 	case Port:
 		if packet.length != 3 {
 			return errors.New("length of port packet must be 3")
 		}
 
-		var port uint16
-		binary.Read(bytes.NewBuffer(packet.payload), binary.BigEndian, &port)
+		// port := binary.BigEndian.Uint16(packet.payload)
 		// Peer has a DHT node on port
 	}
 	return nil
@@ -339,13 +329,13 @@ func (peer *Peer) sendInterested() {
 }
 
 func (peer *Peer) sendRequest(index, begin, length uint32) {
-	var packet bytes.Buffer
-	binary.Write(&packet, binary.BigEndian, uint32(13))
-	packet.WriteByte(Request)
-	binary.Write(&packet, binary.BigEndian, index)
-	binary.Write(&packet, binary.BigEndian, begin)
-	binary.Write(&packet, binary.BigEndian, length)
-	peer.connection.Write(packet.Bytes())
+    packet := make([]byte, 17)
+    binary.BigEndian.PutUint32(packet, 13) // Length
+    packet[4] = Request
+    binary.BigEndian.PutUint32(packet[5:], index)
+    binary.BigEndian.PutUint32(packet[9:], begin)
+    binary.BigEndian.PutUint32(packet[13:], length)
+	peer.connection.Write(packet)
 }
 
 func (peer *Peer) getPeerPiece(index uint32) (*PeerPiece, int) {
