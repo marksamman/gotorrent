@@ -159,11 +159,10 @@ func (peer *Peer) connect() {
 
 	peer.torrent.addPeerChannel <- peer
 
-	errorChannel := make(chan error)
+	errorChannel := make(chan struct{})
 	go peer.receiver(errorChannel)
 
-	running := true
-	for running {
+	for {
 		select {
 		case pieceIndex := <-peer.requestPieceChannel:
 			peer.sendPieceRequest(pieceIndex)
@@ -171,34 +170,34 @@ func (peer *Peer) connect() {
 			peer.sendPieceBlockMessage(blockMessage)
 		case pieceIndex := <-peer.sendHaveChannel:
 			peer.sendHaveMessage(pieceIndex)
-		case err := <-errorChannel:
-			log.Printf("error in peer %s: %s", addr, err)
+		case <-errorChannel:
 			peer.close()
 			go func() {
 				peer.torrent.removePeerChannel <- peer
 			}()
-			running = false
+			for {
+				select {
+				// Until we receive another message over "done" to
+				// confirm the removal of the peer, it's possible that
+				// Torrent can send messages over other channels.
+				case <-peer.sendHaveChannel:
+				case <-peer.sendPieceBlockChannel:
+				case <-peer.requestPieceChannel:
+				case <-peer.done:
+					return
+				}
+			}
 		case <-peer.done:
 			peer.close()
 		}
 	}
-
-	for {
-		select {
-		case <-peer.sendHaveChannel:
-		case <-peer.sendPieceBlockChannel:
-		case <-peer.requestPieceChannel:
-		case <-peer.done:
-			return
-		}
-	}
 }
 
-func (peer *Peer) receiver(errorChannel chan error) {
+func (peer *Peer) receiver(errorChannel chan struct{}) {
 	for {
 		lengthHeader, err := peer.readN(4)
 		if err != nil {
-			errorChannel <- err
+			errorChannel <- struct{}{}
 			break
 		}
 
@@ -210,12 +209,13 @@ func (peer *Peer) receiver(errorChannel chan error) {
 
 		data, err := peer.readN(int(length))
 		if err != nil {
-			errorChannel <- err
+			errorChannel <- struct{}{}
 			break
 		}
 
 		if err := peer.processMessage(length, data[0], data[1:]); err != nil {
-			errorChannel <- err
+			log.Print(err)
+			errorChannel <- struct{}{}
 			break
 		}
 	}
