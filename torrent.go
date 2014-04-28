@@ -348,7 +348,7 @@ func (torrent *Torrent) download() error {
 	torrent.connectToPeers(resp["peers"])
 
 	trackerIntervalTimer := time.Tick(time.Second * time.Duration(resp["interval"].(int64)))
-	for torrent.completedPieces != len(torrent.pieces) {
+	for torrent.completedPieces != len(torrent.pieces) || len(torrent.peers) != 0 {
 		select {
 		case havePieceMessage := <-torrent.havePieceChannel:
 			torrent.handleHaveMessage(havePieceMessage)
@@ -376,16 +376,10 @@ func (torrent *Torrent) download() error {
 		torrent.pendingFileWrites--
 	}
 
-	for _, peer := range torrent.peers {
-		close(peer.done)
-	}
-
 	for k := range torrent.files {
 		torrent.files[k].handle.Close()
 	}
 
-	params["event"] = "completed"
-	torrent.sendTrackerRequest(params)
 	params["event"] = "stopped"
 	torrent.sendTrackerRequest(params)
 	return nil
@@ -524,7 +518,7 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 	}
 
 	if !torrent.checkPieceHash(pieceMessage.data, pieceMessage.index) {
-		close(pieceMessage.from.done)
+		pieceMessage.from.done <- struct{}{}
 		return
 	}
 
@@ -559,13 +553,20 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 		beginPos += amountWrite
 	}
 
-	for _, peer := range torrent.peers {
-		go func(peer *Peer) {
-			peer.sendHaveChannel <- pieceMessage.index
-		}(peer)
-	}
-
 	fmt.Printf("[%s] Downloaded: %.2f%c\n", torrent.name, float64(torrent.completedPieces)*100/float64(len(torrent.pieces)), '%')
+	if torrent.completedPieces == len(torrent.pieces) {
+		for _, peer := range torrent.peers {
+			peer.done <- struct{}{}
+		}
+
+		params := make(map[string]string)
+		params["event"] = "completed"
+		torrent.sendTrackerRequest(params)
+	} else {
+		for _, peer := range torrent.peers {
+			peer.sendHaveChannel <- pieceMessage.index
+		}
+	}
 }
 
 func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
@@ -584,9 +585,7 @@ func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
 		if _, ok := peer.pieces[i]; ok {
 			if piece.busyness == 0 {
 				piece.busyness = 1
-				go func() {
-					peer.requestPieceChannel <- i
-				}()
+				peer.requestPieceChannel <- i
 				return
 			} else if busyness > piece.busyness {
 				busyness = piece.busyness
@@ -597,36 +596,38 @@ func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
 
 	if busyness != math.MaxInt32 {
 		torrent.pieces[pieceIndex].busyness++
-		go func() {
-			peer.requestPieceChannel <- pieceIndex
-		}()
+		peer.requestPieceChannel <- pieceIndex
 	}
 }
 
 func (torrent *Torrent) handleAddPeer(peer *Peer) {
 	torrent.peers[peer.id] = peer
 	fmt.Printf("[%s] %d active peers\n", torrent.name, len(torrent.peers))
+	if torrent.completedPieces == len(torrent.pieces) {
+		peer.done <- struct{}{}
+	}
 }
 
 func (torrent *Torrent) handleRemovePeer(peer *Peer) {
 	delete(torrent.peers, peer.id)
+	peer.done <- struct{}{}
 	fmt.Printf("[%s] %d active peers\n", torrent.name, len(torrent.peers))
 }
 
 func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequestMessage) {
 	if blockRequestMessage.index >= uint32(len(torrent.pieces)) {
-		close(blockRequestMessage.from.done)
+		blockRequestMessage.from.done <- struct{}{}
 		return
 	}
 
 	if !torrent.pieces[blockRequestMessage.index].done {
-		close(blockRequestMessage.from.done)
+		blockRequestMessage.from.done <- struct{}{}
 		return
 	}
 
 	end := int64(blockRequestMessage.begin) + int64(blockRequestMessage.length)
 	if end >= torrent.getPieceLength(blockRequestMessage.index) {
-		close(blockRequestMessage.from.done)
+		blockRequestMessage.from.done <- struct{}{}
 		return
 	}
 
