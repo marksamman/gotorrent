@@ -113,6 +113,10 @@ func (peer *Peer) close() {
 }
 
 func (peer *Peer) connect() {
+	defer func() {
+		peer.torrent.decrementPeerCount <- struct{}{}
+	}()
+
 	var addr string
 	if ip := peer.ip.To4(); ip != nil {
 		addr = fmt.Sprintf("%s:%d", ip.String(), peer.port)
@@ -171,7 +175,6 @@ func (peer *Peer) connect() {
 		case pieceIndex := <-peer.sendHaveChannel:
 			peer.sendHaveMessage(pieceIndex)
 		case <-errorChannel:
-			peer.close()
 			go func() {
 				peer.torrent.removePeerChannel <- peer
 			}()

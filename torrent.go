@@ -41,19 +41,17 @@ import (
 )
 
 type Torrent struct {
+	totalPeerCount  int
+	files           []File
+	pieces          []TorrentPiece
+	peers           map[string]*Peer
+	completedPieces int
+
 	name        string
 	announceURL string
 	comment     string
 	pieceLength int64
 	totalSize   int64
-
-	peers             map[string]*Peer
-	handshake         []byte
-	files             []File
-	pieces            []TorrentPiece
-	completedPieces   int
-	uploadedBytes     uint32
-	pendingFileWrites int
 
 	pieceChannel        chan *PieceMessage
 	bitfieldChannel     chan *BitfieldMessage
@@ -62,7 +60,12 @@ type Torrent struct {
 	removePeerChannel   chan *Peer
 	blockRequestChannel chan *BlockRequestMessage
 
-	fileWriteDone chan struct{}
+	fileWriteDone      chan struct{}
+	decrementPeerCount chan struct{}
+
+	handshake         []byte
+	uploadedBytes     uint32
+	pendingFileWrites int
 }
 
 type TorrentPiece struct {
@@ -344,11 +347,12 @@ func (torrent *Torrent) download() error {
 	torrent.removePeerChannel = make(chan *Peer)
 	torrent.peers = make(map[string]*Peer)
 	torrent.fileWriteDone = make(chan struct{})
+	torrent.decrementPeerCount = make(chan struct{})
 
 	torrent.connectToPeers(resp["peers"])
 
 	trackerIntervalTimer := time.Tick(time.Second * time.Duration(resp["interval"].(int64)))
-	for torrent.completedPieces != len(torrent.pieces) || len(torrent.peers) != 0 {
+	for torrent.completedPieces != len(torrent.pieces) || torrent.totalPeerCount != 0 {
 		select {
 		case havePieceMessage := <-torrent.havePieceChannel:
 			torrent.handleHaveMessage(havePieceMessage)
@@ -368,6 +372,8 @@ func (torrent *Torrent) download() error {
 			if resp, err := torrent.sendTrackerRequest(nil); err != nil {
 				torrent.connectToPeers(resp["peers"])
 			}
+		case <-torrent.decrementPeerCount:
+			torrent.totalPeerCount--
 		}
 	}
 
@@ -458,6 +464,7 @@ func (torrent *Torrent) connectToPeers(peers interface{}) {
 	switch peers.(type) {
 	case string:
 		peers := peers.(string)
+		torrent.totalPeerCount += len(peers) / 6
 		for i := 0; i < len(peers); i += 6 {
 			peer := NewPeer(torrent)
 			peer.ip = net.IPv4(peers[i], peers[i+1], peers[i+2], peers[i+3])
@@ -465,7 +472,9 @@ func (torrent *Torrent) connectToPeers(peers interface{}) {
 			go peer.connect()
 		}
 	case []interface{}:
-		for _, dict := range peers.([]interface{}) {
+		peers := peers.([]interface{})
+		torrent.totalPeerCount += len(peers)
+		for _, dict := range peers {
 			dict := dict.(map[string]interface{})
 
 			peer := NewPeer(torrent)
