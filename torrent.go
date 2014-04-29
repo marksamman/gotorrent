@@ -637,7 +637,7 @@ func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequ
 	}
 
 	end := int64(blockRequestMessage.begin) + int64(blockRequestMessage.length)
-	if end >= torrent.getPieceLength(blockRequestMessage.index) {
+	if end > torrent.getPieceLength(blockRequestMessage.index) {
 		blockRequestMessage.from.done <- struct{}{}
 		return
 	}
