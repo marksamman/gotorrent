@@ -44,7 +44,7 @@ type Torrent struct {
 	totalPeerCount  int
 	files           []File
 	pieces          []TorrentPiece
-	peers           map[string]*Peer
+	activePeers     map[string]*Peer
 	completedPieces int
 
 	name        string
@@ -345,11 +345,11 @@ func (torrent *Torrent) download() error {
 	torrent.havePieceChannel = make(chan *HavePieceMessage)
 	torrent.addPeerChannel = make(chan *Peer)
 	torrent.removePeerChannel = make(chan *Peer)
-    torrent.blockRequestChannel = make(chan *BlockRequestMessage)
+	torrent.blockRequestChannel = make(chan *BlockRequestMessage)
 	torrent.fileWriteDone = make(chan struct{})
 	torrent.decrementPeerCount = make(chan struct{})
 
-    torrent.peers = make(map[string]*Peer)
+	torrent.activePeers = make(map[string]*Peer)
 
 	torrent.connectToPeers(resp["peers"])
 
@@ -566,7 +566,7 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 
 	fmt.Printf("[%s] Downloaded: %.2f%c\n", torrent.name, float64(torrent.completedPieces)*100/float64(len(torrent.pieces)), '%')
 	if torrent.completedPieces == len(torrent.pieces) {
-		for _, peer := range torrent.peers {
+		for _, peer := range torrent.activePeers {
 			peer.done <- struct{}{}
 		}
 
@@ -574,7 +574,7 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 		params["event"] = "completed"
 		torrent.sendTrackerRequest(params)
 	} else {
-		for _, peer := range torrent.peers {
+		for _, peer := range torrent.activePeers {
 			peer.sendHaveChannel <- pieceMessage.index
 		}
 	}
@@ -612,17 +612,17 @@ func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
 }
 
 func (torrent *Torrent) handleAddPeer(peer *Peer) {
-	torrent.peers[peer.id] = peer
-	fmt.Printf("[%s] %d active peers\n", torrent.name, len(torrent.peers))
+	torrent.activePeers[peer.id] = peer
+	fmt.Printf("[%s] %d active peers\n", torrent.name, len(torrent.activePeers))
 	if torrent.completedPieces == len(torrent.pieces) {
 		peer.done <- struct{}{}
 	}
 }
 
 func (torrent *Torrent) handleRemovePeer(peer *Peer) {
-	delete(torrent.peers, peer.id)
+	delete(torrent.activePeers, peer.id)
 	peer.done <- struct{}{}
-	fmt.Printf("[%s] %d active peers\n", torrent.name, len(torrent.peers))
+	fmt.Printf("[%s] %d active peers\n", torrent.name, len(torrent.activePeers))
 }
 
 func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequestMessage) {
