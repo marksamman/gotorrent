@@ -345,9 +345,11 @@ func (torrent *Torrent) download() error {
 	torrent.havePieceChannel = make(chan *HavePieceMessage)
 	torrent.addPeerChannel = make(chan *Peer)
 	torrent.removePeerChannel = make(chan *Peer)
-	torrent.peers = make(map[string]*Peer)
+    torrent.blockRequestChannel = make(chan *BlockRequestMessage)
 	torrent.fileWriteDone = make(chan struct{})
 	torrent.decrementPeerCount = make(chan struct{})
+
+    torrent.peers = make(map[string]*Peer)
 
 	torrent.connectToPeers(resp["peers"])
 
