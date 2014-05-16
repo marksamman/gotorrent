@@ -31,6 +31,7 @@ import (
 	"math"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -59,7 +60,7 @@ type Peer struct {
 	remoteInterested bool
 	localChoked      bool
 	localInterested  bool
-	closed           bool
+	closed           uint32
 
 	requestPieceChannel   chan uint32
 	sendPieceBlockChannel chan *BlockMessage
@@ -106,9 +107,9 @@ func (peer *Peer) readN(n int) ([]byte, error) {
 }
 
 func (peer *Peer) close() {
-	if !peer.closed {
+	if atomic.LoadUint32(&peer.closed) == 0 {
 		peer.connection.Close()
-		peer.closed = true
+		atomic.StoreUint32(&peer.closed, 1)
 	}
 }
 
