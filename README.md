@@ -1,4 +1,4 @@
-gotorrent
+gotorrent [![Build Status](https://travis-ci.org/marksamman/gotorrent.svg?branch=master)](https://travis-ci.org/marksamman/gotorrent)
 =========
 
 BitTorrent client written in Go
