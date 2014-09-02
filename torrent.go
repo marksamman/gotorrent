@@ -612,6 +612,12 @@ func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
 }
 
 func (torrent *Torrent) handleAddPeer(peer *Peer) {
+	if _, exists := torrent.activePeers[peer.id]; exists {
+		// we are already connected to that peer
+		peer.done <- struct{}{}
+		return
+	}
+
 	torrent.activePeers[peer.id] = peer
 	fmt.Printf("[%s] %d active peers\n", torrent.name, len(torrent.activePeers))
 	if torrent.completedPieces == len(torrent.pieces) {
