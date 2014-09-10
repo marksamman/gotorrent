@@ -107,9 +107,8 @@ func (peer *Peer) readN(n int) ([]byte, error) {
 }
 
 func (peer *Peer) close() {
-	if atomic.LoadUint32(&peer.closed) == 0 {
+	if atomic.CompareAndSwapUint32(&peer.closed, 0, 1) {
 		peer.connection.Close()
-		atomic.StoreUint32(&peer.closed, 1)
 	}
 }
 
