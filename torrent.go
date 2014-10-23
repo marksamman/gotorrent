@@ -154,33 +154,25 @@ func (torrent *Torrent) open(filename string) error {
 		torrent.pieces = append(torrent.pieces, TorrentPiece{false, 0, pieces[i : i+20]})
 	}
 
-	os.Mkdir("Downloads", 0700)
-	if err := os.Chdir("Downloads"); err != nil {
+	if err := os.Mkdir("Downloads", 0700); err != nil && !os.IsExist(err) {
 		return err
 	}
-	defer os.Chdir("..")
 
-	base, err := os.Getwd()
+	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
 
+	base := filepath.Join(cwd, "Downloads")
+
 	// Set files
 	if files, exists := info["files"]; exists {
-		dirName := info["name"].(string)
+		dirName := filepath.Join("Downloads", info["name"].(string))
 		if err := torrent.validatePath(base, dirName); err != nil {
 			return err
 		}
 
-		os.Mkdir(dirName, 0700)
-		if err := os.Chdir(dirName); err != nil {
-			return err
-		}
-		defer os.Chdir("..")
-
-		if base, err = os.Getwd(); err != nil {
-			return err
-		}
+		base := filepath.Join(cwd, dirName)
 
 		for _, v := range files.([]interface{}) {
 			v := v.(map[string]interface{})
@@ -194,7 +186,7 @@ func (torrent *Torrent) open(filename string) error {
 
 			// Set up directory structure
 			pathList := v["path"].([]interface{})
-			pathElements := []string{}
+			pathElements := []string{dirName}
 			for i := 0; i < len(pathList)-1; i++ {
 				pathElements = append(pathElements, pathList[i].(string))
 			}
@@ -225,7 +217,7 @@ func (torrent *Torrent) open(filename string) error {
 		}
 	} else {
 		// Single file
-		fileName := info["name"].(string)
+		fileName := filepath.Join("Downloads", info["name"].(string))
 		if err := torrent.validatePath(base, fileName); err != nil {
 			return err
 		}
