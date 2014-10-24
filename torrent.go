@@ -420,12 +420,12 @@ func (torrent *Torrent) sendUDPTrackerRequest(event uint32) (map[string]interfac
 	}
 
 	// Connect
-	var transactionId uint32 = rand.Uint32()
+	transactionID := rand.Uint32()
 
 	buf := make([]byte, 16)
 	binary.BigEndian.PutUint64(buf, 0x41727101980) // connection id
 	binary.BigEndian.PutUint32(buf[8:], 0)         // action
-	binary.BigEndian.PutUint32(buf[12:], transactionId)
+	binary.BigEndian.PutUint32(buf[12:], transactionID)
 	if n, err := conn.Write(buf); err != nil {
 		return nil, err
 	} else if n != 16 {
@@ -441,16 +441,16 @@ func (torrent *Torrent) sendUDPTrackerRequest(event uint32) (map[string]interfac
 
 	if binary.BigEndian.Uint32(resp) != 0 {
 		return nil, errors.New("action mismatch")
-	} else if binary.BigEndian.Uint32(resp[4:]) != transactionId {
+	} else if binary.BigEndian.Uint32(resp[4:]) != transactionID {
 		return nil, errors.New("transaction id mismatch")
 	}
-	respConnectionId := binary.BigEndian.Uint64(resp[8:])
+	respConnectionID := binary.BigEndian.Uint64(resp[8:])
 
 	// Announce
 	buf = make([]byte, 98)
-	binary.BigEndian.PutUint64(buf[0:], respConnectionId)
+	binary.BigEndian.PutUint64(buf[0:], respConnectionID)
 	binary.BigEndian.PutUint32(buf[8:], 1) // action
-	binary.BigEndian.PutUint32(buf[12:], transactionId)
+	binary.BigEndian.PutUint32(buf[12:], transactionID)
 	copy(buf[16:], torrent.getInfoHash())
 	copy(buf[36:], client.peerID)
 
@@ -477,7 +477,7 @@ func (torrent *Torrent) sendUDPTrackerRequest(event uint32) (map[string]interfac
 
 	if binary.BigEndian.Uint32(resp) != 1 {
 		return nil, errors.New("action mismatch")
-	} else if binary.BigEndian.Uint32(resp[4:]) != transactionId {
+	} else if binary.BigEndian.Uint32(resp[4:]) != transactionID {
 		return nil, errors.New("transaction id mismatch")
 	}
 
