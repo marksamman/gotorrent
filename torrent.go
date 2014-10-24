@@ -429,14 +429,14 @@ func (torrent *Torrent) sendUDPTrackerRequest(event uint32) (map[string]interfac
 	if n, err := conn.Write(buf); err != nil {
 		return nil, err
 	} else if n != 16 {
-		return nil, fmt.Errorf("expected to write 16 bytes, wrote %d\n", n)
+		return nil, fmt.Errorf("expected to write 16 bytes, wrote %d", n)
 	}
 
 	resp := make([]byte, 16)
 	if n, err := conn.Read(resp); err != nil {
 		return nil, err
 	} else if n != 16 {
-		return nil, fmt.Errorf("expected packet of length 16, got %d\n", n)
+		return nil, fmt.Errorf("expected packet of length 16, got %d", n)
 	}
 
 	if binary.BigEndian.Uint32(resp) != 0 {
@@ -466,7 +466,7 @@ func (torrent *Torrent) sendUDPTrackerRequest(event uint32) (map[string]interfac
 	if n, err := conn.Write(buf); err != nil {
 		return nil, err
 	} else if n != 98 {
-		return nil, fmt.Errorf("expected to write 98 bytes, wrote %d\n", n)
+		return nil, fmt.Errorf("expected to write 98 bytes, wrote %d", n)
 	}
 
 	resp = make([]byte, 512)
@@ -514,8 +514,9 @@ func (torrent *Torrent) sendHTTPTrackerRequest(event uint32) (map[string]interfa
 	}
 	defer httpResponse.Body.Close()
 
-	if httpResponse.StatusCode != 200 {
-		return nil, fmt.Errorf("bad response from tracker: %s", httpResponse.Status)
+	if httpResponse.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("bad response from tracker (%d): %s",
+			httpResponse.StatusCode, httpResponse.Status)
 	}
 
 	resp, err := bencode.Decode(httpResponse.Body)
