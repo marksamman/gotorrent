@@ -9,7 +9,6 @@ $ ./gotorrent file.torrent[ file2.torrent[ ...]]
 ```
 
 ##### TODO
-* UDP Tracker support
 * When downloading the same piece from multiple peers, send cancel to the peers who weren't fast enough
 * Show upload/download speed
 * Limit upload/download speed
@@ -18,4 +17,5 @@ $ ./gotorrent file.torrent[ file2.torrent[ ...]]
 * Server-side (allow other peers to connect to us)
 * Option to seed after completed download
 * Implement a choking algorithm to prevent peers from choking us
+* Parse "announce-list" for more trackers
 * More tests!

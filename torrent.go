@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -66,6 +67,8 @@ type Torrent struct {
 	handshake         []byte
 	uploadedBytes     uint32
 	pendingFileWrites int
+
+	trackerProtocol byte
 }
 
 type TorrentPiece struct {
@@ -103,6 +106,18 @@ type BlockRequestMessage struct {
 	length uint32
 }
 
+const (
+	TrackerHTTP = iota
+	TrackerUDP
+)
+
+const (
+	TrackerEventNone = iota
+	TrackerEventCompleted
+	TrackerEventStarted
+	TrackerEventStopped
+)
+
 func (torrent *Torrent) validatePath(base string, path string) error {
 	if absolutePath, err := filepath.Abs(path); err != nil {
 		return err
@@ -127,6 +142,16 @@ func (torrent *Torrent) open(filename string) error {
 	}
 
 	torrent.announceURL = data["announce"].(string)
+	if len(torrent.announceURL) < 7 {
+		return errors.New("announce URL is too short")
+	} else if torrent.announceURL[0:4] == "http" {
+		torrent.trackerProtocol = TrackerHTTP
+	} else if torrent.announceURL[0:3] == "udp" {
+		torrent.trackerProtocol = TrackerUDP
+	} else {
+		return errors.New("unsupported tracker protocol")
+	}
+
 	if comment, ok := data["comment"]; ok {
 		torrent.comment = comment.(string)
 	}
@@ -325,9 +350,7 @@ func (torrent *Torrent) download() error {
 		return nil
 	}
 
-	params := make(map[string]string)
-	params["event"] = "started"
-	resp, err := torrent.sendTrackerRequest(params)
+	resp, err := torrent.sendTrackerRequest(TrackerEventStarted)
 	if err != nil {
 		return err
 	}
@@ -363,7 +386,7 @@ func (torrent *Torrent) download() error {
 		case <-torrent.fileWriteDone:
 			torrent.pendingFileWrites--
 		case <-trackerIntervalTimer:
-			if resp, err := torrent.sendTrackerRequest(nil); err != nil {
+			if resp, err := torrent.sendTrackerRequest(TrackerEventNone); err != nil {
 				torrent.connectToPeers(resp["peers"])
 			}
 		case <-torrent.decrementPeerCount:
@@ -380,8 +403,7 @@ func (torrent *Torrent) download() error {
 		torrent.files[k].handle.Close()
 	}
 
-	params["event"] = "stopped"
-	torrent.sendTrackerRequest(params)
+	torrent.sendTrackerRequest(TrackerEventStopped)
 	return nil
 }
 
@@ -391,19 +413,98 @@ func (torrent *Torrent) checkPieceHash(data []byte, pieceIndex uint32) bool {
 	return bytes.Equal(hasher.Sum(nil), []byte(torrent.pieces[pieceIndex].hash))
 }
 
-func (torrent *Torrent) sendTrackerRequest(params map[string]string) (map[string]interface{}, error) {
-	var paramBuf bytes.Buffer
-	if params != nil {
-		for k, v := range params {
-			paramBuf.WriteString(k)
-			paramBuf.WriteByte('=')
-			paramBuf.WriteString(v)
-			paramBuf.WriteByte('&')
-		}
+func (torrent *Torrent) sendUDPTrackerRequest(event uint32) (map[string]interface{}, error) {
+	conn, err := net.Dial("udp", torrent.announceURL[6:])
+	if err != nil {
+		return nil, err
 	}
+
+	// Connect
+	var transactionId uint32 = rand.Uint32()
+
+	buf := make([]byte, 16)
+	binary.BigEndian.PutUint64(buf, 0x41727101980) // connection id
+	binary.BigEndian.PutUint32(buf[8:], 0)         // action
+	binary.BigEndian.PutUint32(buf[12:], transactionId)
+	if n, err := conn.Write(buf); err != nil {
+		return nil, err
+	} else if n != 16 {
+		return nil, fmt.Errorf("expected to write 16 bytes, wrote %d\n", n)
+	}
+
+	resp := make([]byte, 16)
+	if n, err := conn.Read(resp); err != nil {
+		return nil, err
+	} else if n != 16 {
+		return nil, fmt.Errorf("expected packet of length 16, got %d\n", n)
+	}
+
+	if binary.BigEndian.Uint32(resp) != 0 {
+		return nil, errors.New("action mismatch")
+	} else if binary.BigEndian.Uint32(resp[4:]) != transactionId {
+		return nil, errors.New("transaction id mismatch")
+	}
+	respConnectionId := binary.BigEndian.Uint64(resp[8:])
+
+	// Announce
+	buf = make([]byte, 98)
+	binary.BigEndian.PutUint64(buf[0:], respConnectionId)
+	binary.BigEndian.PutUint32(buf[8:], 1) // action
+	binary.BigEndian.PutUint32(buf[12:], transactionId)
+	copy(buf[16:], torrent.getInfoHash())
+	copy(buf[36:], client.peerID)
+
+	downloadedBytes := uint64(torrent.getDownloadedSize())
+	binary.BigEndian.PutUint64(buf[56:], downloadedBytes)
+	binary.BigEndian.PutUint64(buf[64:], uint64(torrent.totalSize)-downloadedBytes)
+	binary.BigEndian.PutUint64(buf[72:], uint64(torrent.uploadedBytes))
+	binary.BigEndian.PutUint32(buf[80:], event)          // event
+	binary.BigEndian.PutUint32(buf[84:], 0)              // ip address
+	binary.BigEndian.PutUint32(buf[88:], 0)              // key
+	binary.BigEndian.PutUint32(buf[92:], math.MaxUint32) // num_want (-1)
+	binary.BigEndian.PutUint16(buf[96:], 6881)           // port
+	if n, err := conn.Write(buf); err != nil {
+		return nil, err
+	} else if n != 98 {
+		return nil, fmt.Errorf("expected to write 98 bytes, wrote %d\n", n)
+	}
+
+	resp = make([]byte, 512)
+	n, err := conn.Read(resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if binary.BigEndian.Uint32(resp) != 1 {
+		return nil, errors.New("action mismatch")
+	} else if binary.BigEndian.Uint32(resp[4:]) != transactionId {
+		return nil, errors.New("transaction id mismatch")
+	}
+
+	interval := binary.BigEndian.Uint32(resp[8:])
+	//leechers := binary.BigEndian.Uint32(resp[12:])
+	//seeders := binary.BigEndian.Uint32(resp[16:])
+
+	responseMap := make(map[string]interface{})
+	responseMap["interval"] = int64(interval)
+	responseMap["peers"] = string(resp[20:n])
+	return responseMap, nil
+}
+
+func (torrent *Torrent) sendHTTPTrackerRequest(event uint32) (map[string]interface{}, error) {
+	var eventString string
+	switch event {
+	case TrackerEventCompleted:
+		eventString = "event=completed&"
+	case TrackerEventStarted:
+		eventString = "event=started&"
+	case TrackerEventStopped:
+		eventString = "event=stopped&"
+	}
+
 	downloadedBytes := torrent.getDownloadedSize()
 	httpResponse, err := http.Get(fmt.Sprintf("%s?%speer_id=%s&info_hash=%s&left=%d&compact=1&downloaded=%d&uploaded=%d&port=6881",
-		torrent.announceURL, paramBuf.String(),
+		torrent.announceURL, eventString,
 		url.QueryEscape(string(client.peerID)),
 		url.QueryEscape(string(torrent.getInfoHash())),
 		torrent.totalSize-downloadedBytes,
@@ -426,6 +527,16 @@ func (torrent *Torrent) sendTrackerRequest(params map[string]string) (map[string
 		return nil, errors.New(failureReason.(string))
 	}
 	return resp, nil
+}
+
+func (torrent *Torrent) sendTrackerRequest(event uint32) (map[string]interface{}, error) {
+	switch torrent.trackerProtocol {
+	case TrackerHTTP:
+		return torrent.sendHTTPTrackerRequest(event)
+	case TrackerUDP:
+		return torrent.sendUDPTrackerRequest(event)
+	}
+	return nil, errors.New("unknown tracker protocol")
 }
 
 func (torrent *Torrent) getPieceLength(pieceIndex uint32) int64 {
@@ -561,10 +672,7 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 		for _, peer := range torrent.activePeers {
 			peer.done <- struct{}{}
 		}
-
-		params := make(map[string]string)
-		params["event"] = "completed"
-		torrent.sendTrackerRequest(params)
+		torrent.sendTrackerRequest(TrackerEventCompleted)
 	} else {
 		for _, peer := range torrent.activePeers {
 			peer.sendHaveChannel <- pieceMessage.index
