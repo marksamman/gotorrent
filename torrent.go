@@ -473,6 +473,8 @@ func (torrent *Torrent) sendUDPTrackerRequest(event uint32) (map[string]interfac
 	n, err := conn.Read(resp)
 	if err != nil {
 		return nil, err
+	} else if n < 20 {
+		return nil, fmt.Errorf("expected to read at least 20 bytes, received %d", n)
 	}
 
 	if binary.BigEndian.Uint32(resp) != 1 {
@@ -481,12 +483,11 @@ func (torrent *Torrent) sendUDPTrackerRequest(event uint32) (map[string]interfac
 		return nil, errors.New("transaction id mismatch")
 	}
 
-	interval := binary.BigEndian.Uint32(resp[8:])
 	//leechers := binary.BigEndian.Uint32(resp[12:])
 	//seeders := binary.BigEndian.Uint32(resp[16:])
 
 	responseMap := make(map[string]interface{})
-	responseMap["interval"] = int64(interval)
+	responseMap["interval"] = int64(binary.BigEndian.Uint32(resp[8:]))
 	responseMap["peers"] = string(resp[20:n])
 	return responseMap, nil
 }
