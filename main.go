@@ -71,7 +71,7 @@ func main() {
 	var peerID bytes.Buffer
 	peerID.WriteString("-GO10000")
 	for i := 0; i < 12; i++ {
-		peerID.WriteByte(byte(rand.Intn(255)))
+		peerID.WriteByte(byte(rand.Intn(256)))
 	}
 	client.peerID = peerID.Bytes()
 
