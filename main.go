@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 Mark Samman <https://github.com/marksamman/gotorrent>
+ * Copyright (c) 2015 Mark Samman <https://github.com/marksamman/gotorrent>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -84,7 +84,7 @@ func main() {
 		}
 
 		fmt.Println("Name:", torrent.name)
-		fmt.Println("Announce URL:", torrent.announceURL)
+		fmt.Println("Announce URL:", torrent.trackers[0].announceURL)
 		fmt.Println("Comment:", torrent.comment)
 		fmt.Printf("Total size: %.2f MB\n", float64(torrent.totalSize/1024/1024))
 		fmt.Printf("Downloaded: %.2f MB (%.2f%%)\n", float64(torrent.getDownloadedSize()/1024/1024), float64(torrent.completedPieces)*100/float64(len(torrent.pieces)))
@@ -98,9 +98,7 @@ func main() {
 	group.Add(len(client.torrents))
 	for _, torrent := range client.torrents {
 		go func(torrent *Torrent) {
-			if err := torrent.download(); err != nil {
-				log.Print(err)
-			}
+			torrent.download()
 			group.Done()
 		}(torrent)
 	}

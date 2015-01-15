@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 Mark Samman <https://github.com/marksamman/gotorrent>
+ * Copyright (c) 2015 Mark Samman <https://github.com/marksamman/gotorrent>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,13 +30,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/rand"
 	"net"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/marksamman/bencode"
 )
@@ -45,30 +41,35 @@ type Torrent struct {
 	totalPeerCount  int
 	files           []File
 	pieces          []TorrentPiece
-	activePeers     map[string]*Peer
+	activePeers     []*Peer
 	completedPieces int
+	knownPeers      map[string]struct{}
 
 	name        string
-	announceURL string
 	comment     string
 	pieceLength int64
 	totalSize   int64
 
-	pieceChannel        chan *PieceMessage
-	bitfieldChannel     chan *BitfieldMessage
-	havePieceChannel    chan *HavePieceMessage
-	addPeerChannel      chan *Peer
-	removePeerChannel   chan *Peer
-	blockRequestChannel chan *BlockRequestMessage
+	pieceChannel               chan *PieceMessage
+	bitfieldChannel            chan *BitfieldMessage
+	havePieceChannel           chan *HavePieceMessage
+	addPeerChannel             chan *Peer
+	removePeerChannel          chan *Peer
+	blockRequestChannel        chan *BlockRequestMessage
+	activeTrackerChannel       chan int
+	stoppedTrackerChannel      chan int
+	requestAnnounceDataChannel chan int
+	peersChannel               chan interface{}
 
 	fileWriteDone      chan struct{}
 	decrementPeerCount chan struct{}
 
 	handshake         []byte
-	uploadedBytes     uint32
+	uploaded          uint64
 	pendingFileWrites int
 
-	trackerProtocol byte
+	trackers       []*Tracker
+	activeTrackers []int
 }
 
 type TorrentPiece struct {
@@ -106,18 +107,6 @@ type BlockRequestMessage struct {
 	length uint32
 }
 
-const (
-	TrackerHTTP = iota
-	TrackerUDP
-)
-
-const (
-	TrackerEventNone = iota
-	TrackerEventCompleted
-	TrackerEventStarted
-	TrackerEventStopped
-)
-
 func (torrent *Torrent) validatePath(base string, path string) error {
 	if absolutePath, err := filepath.Abs(path); err != nil {
 		return err
@@ -125,6 +114,31 @@ func (torrent *Torrent) validatePath(base string, path string) error {
 		return errors.New("path is too short")
 	} else if base != absolutePath[:len(base)] {
 		return errors.New("path mismatch")
+	}
+	return nil
+}
+
+func (torrent *Torrent) parseTrackerURL(url string) error {
+	if len(url) < 7 {
+		return errors.New("announce URL is too short")
+	}
+
+	if url[0:4] == "http" {
+		torrent.trackers = append(torrent.trackers, &Tracker{
+			id:          len(torrent.trackers),
+			announceURL: url,
+			protocol:    TrackerHTTP,
+			torrent:     torrent,
+		})
+	} else if url[0:3] == "udp" {
+		torrent.trackers = append(torrent.trackers, &Tracker{
+			id:          len(torrent.trackers),
+			announceURL: url,
+			protocol:    TrackerUDP,
+			torrent:     torrent,
+		})
+	} else {
+		return errors.New("unsupported tracker protocol")
 	}
 	return nil
 }
@@ -141,15 +155,14 @@ func (torrent *Torrent) open(filename string) error {
 		return err
 	}
 
-	torrent.announceURL = data["announce"].(string)
-	if len(torrent.announceURL) < 7 {
-		return errors.New("announce URL is too short")
-	} else if torrent.announceURL[0:4] == "http" {
-		torrent.trackerProtocol = TrackerHTTP
-	} else if torrent.announceURL[0:3] == "udp" {
-		torrent.trackerProtocol = TrackerUDP
+	if announceLists, ok := data["announce-list"].([]interface{}); ok {
+		for _, announceList := range announceLists {
+			for _, announceURL := range announceList.([]interface{}) {
+				torrent.parseTrackerURL(announceURL.(string))
+			}
+		}
 	} else {
-		return errors.New("unsupported tracker protocol")
+		torrent.parseTrackerURL(data["announce"].(string))
 	}
 
 	if comment, ok := data["comment"]; ok {
@@ -160,23 +173,23 @@ func (torrent *Torrent) open(filename string) error {
 	torrent.name = info["name"].(string)
 	torrent.pieceLength = info["piece length"].(int64)
 
-	// Set info hash
-	hasher := sha1.New()
-	hasher.Write(bencode.Encode(info))
+	infoHash := sha1.Sum(bencode.Encode(info))
 
 	// Set handshake
 	var buffer bytes.Buffer
 	buffer.WriteByte(19) // length of the string "BitTorrent Protocol"
 	buffer.WriteString("BitTorrent protocol")
 	buffer.WriteString("\x00\x00\x00\x00\x00\x00\x00\x00") // reserved
-	buffer.Write(hasher.Sum(nil))
+	buffer.Write(infoHash[:])
 	buffer.Write(client.peerID)
 	torrent.handshake = buffer.Bytes()
 
 	// Set pieces
 	pieces := info["pieces"].(string)
 	for i := 0; i < len(pieces); i += 20 {
-		torrent.pieces = append(torrent.pieces, TorrentPiece{false, 0, pieces[i : i+20]})
+		torrent.pieces = append(torrent.pieces, TorrentPiece{
+			hash: pieces[i : i+20],
+		})
 	}
 
 	if err := os.Mkdir("Downloads", 0700); err != nil && !os.IsExist(err) {
@@ -345,15 +358,52 @@ func (torrent *Torrent) findCompletedPieces(file *os.File, begin, length int64, 
 	}
 }
 
-func (torrent *Torrent) download() error {
+func (torrent *Torrent) getTrackerRequestData(event uint32) *TrackerRequestData {
+	downloaded := torrent.getDownloadedSize()
+	return &TrackerRequestData{
+		event:      event,
+		downloaded: uint64(downloaded),
+		uploaded:   torrent.uploaded,
+		remaining:  uint64(torrent.totalSize - downloaded),
+	}
+}
+
+func (torrent *Torrent) startTrackers() {
+	data := torrent.getTrackerRequestData(TrackerEventStarted)
+	for _, tracker := range torrent.trackers {
+		go tracker.start(data)
+	}
+}
+
+func (torrent *Torrent) stopTrackers() {
+	data := torrent.getTrackerRequestData(TrackerEventStopped)
+	for _, trackerId := range torrent.activeTrackers {
+		go func(announceChannel chan *TrackerRequestData, stopChannel chan struct{}) {
+			announceChannel <- data
+			stopChannel <- struct{}{}
+		}(torrent.trackers[trackerId].announceChannel, torrent.trackers[trackerId].stopChannel)
+	}
+}
+
+func (torrent *Torrent) announceToTrackers(event uint32) {
+	data := torrent.getTrackerRequestData(event)
+	for _, trackerId := range torrent.activeTrackers {
+		go func(channel chan *TrackerRequestData) {
+			channel <- data
+		}(torrent.trackers[trackerId].announceChannel)
+	}
+}
+
+func (torrent *Torrent) download() {
 	if torrent.completedPieces == len(torrent.pieces) {
-		return nil
+		return
 	}
 
-	resp, err := torrent.sendTrackerRequest(TrackerEventStarted)
-	if err != nil {
-		return err
-	}
+	torrent.activeTrackerChannel = make(chan int)
+	torrent.stoppedTrackerChannel = make(chan int)
+	torrent.requestAnnounceDataChannel = make(chan int)
+	torrent.peersChannel = make(chan interface{})
+	torrent.startTrackers()
 
 	torrent.pieceChannel = make(chan *PieceMessage)
 	torrent.bitfieldChannel = make(chan *BitfieldMessage)
@@ -364,11 +414,8 @@ func (torrent *Torrent) download() error {
 	torrent.fileWriteDone = make(chan struct{})
 	torrent.decrementPeerCount = make(chan struct{})
 
-	torrent.activePeers = make(map[string]*Peer)
+	torrent.knownPeers = make(map[string]struct{})
 
-	torrent.connectToPeers(resp["peers"])
-
-	trackerIntervalTimer := time.Tick(time.Second * time.Duration(resp["interval"].(int64)))
 	for torrent.completedPieces != len(torrent.pieces) || torrent.totalPeerCount != 0 {
 		select {
 		case havePieceMessage := <-torrent.havePieceChannel:
@@ -385,160 +432,56 @@ func (torrent *Torrent) download() error {
 			torrent.handleRemovePeer(peer)
 		case <-torrent.fileWriteDone:
 			torrent.pendingFileWrites--
-		case <-trackerIntervalTimer:
-			if resp, err := torrent.sendTrackerRequest(TrackerEventNone); err != nil {
-				torrent.connectToPeers(resp["peers"])
-			}
 		case <-torrent.decrementPeerCount:
 			torrent.totalPeerCount--
+		case peers := <-torrent.peersChannel:
+			torrent.connectToPeers(peers)
+		case trackerId := <-torrent.activeTrackerChannel:
+			torrent.activeTrackers = append(torrent.activeTrackers, trackerId)
+			fmt.Printf("[%s] %d active trackers\n", torrent.name, len(torrent.activeTrackers))
+		case trackerId := <-torrent.requestAnnounceDataChannel:
+			go func(channel chan *TrackerRequestData, data *TrackerRequestData) {
+				channel <- data
+			}(torrent.trackers[trackerId].announceChannel, torrent.getTrackerRequestData(TrackerEventNone))
 		}
 	}
+	torrent.stopTrackers()
 
-	for torrent.pendingFileWrites != 0 {
-		<-torrent.fileWriteDone
-		torrent.pendingFileWrites--
+	if torrent.pendingFileWrites != 0 {
+		fmt.Printf("[%s] Waiting for %d pending file writes...\n", torrent.name, torrent.pendingFileWrites)
+		for torrent.pendingFileWrites != 0 {
+			<-torrent.fileWriteDone
+			torrent.pendingFileWrites--
+		}
 	}
 
 	for k := range torrent.files {
 		torrent.files[k].handle.Close()
 	}
 
-	torrent.sendTrackerRequest(TrackerEventStopped)
-	return nil
+	if len(torrent.activeTrackers) != 0 {
+		fmt.Printf("[%s] Waiting for %d trackers to stop...\n", torrent.name, len(torrent.activeTrackers))
+		for len(torrent.activeTrackers) != 0 {
+			select {
+			case trackerId := <-torrent.stoppedTrackerChannel:
+				for k, v := range torrent.activeTrackers {
+					if v == trackerId {
+						torrent.activeTrackers = append(torrent.activeTrackers[:k], torrent.activeTrackers[k+1:]...)
+						break
+					}
+				}
+			// Handle other messages that a Tracker may send
+			case <-torrent.activeTrackerChannel:
+			case <-torrent.peersChannel:
+			case <-torrent.requestAnnounceDataChannel:
+			}
+		}
+	}
 }
 
 func (torrent *Torrent) checkPieceHash(data []byte, pieceIndex uint32) bool {
-	hasher := sha1.New()
-	hasher.Write(data)
-	return bytes.Equal(hasher.Sum(nil), []byte(torrent.pieces[pieceIndex].hash))
-}
-
-func (torrent *Torrent) sendUDPTrackerRequest(event uint32) (map[string]interface{}, error) {
-	conn, err := net.Dial("udp", torrent.announceURL[6:])
-	if err != nil {
-		return nil, err
-	}
-
-	// Connect
-	transactionID := rand.Uint32()
-
-	buf := make([]byte, 16)
-	binary.BigEndian.PutUint64(buf, 0x41727101980) // connection id
-	binary.BigEndian.PutUint32(buf[8:], 0)         // action
-	binary.BigEndian.PutUint32(buf[12:], transactionID)
-	if n, err := conn.Write(buf); err != nil {
-		return nil, err
-	} else if n != 16 {
-		return nil, fmt.Errorf("expected to write 16 bytes, wrote %d", n)
-	}
-
-	resp := make([]byte, 16)
-	if n, err := conn.Read(resp); err != nil {
-		return nil, err
-	} else if n != 16 {
-		return nil, fmt.Errorf("expected packet of length 16, got %d", n)
-	}
-
-	if binary.BigEndian.Uint32(resp) != 0 {
-		return nil, errors.New("action mismatch")
-	} else if binary.BigEndian.Uint32(resp[4:]) != transactionID {
-		return nil, errors.New("transaction id mismatch")
-	}
-	respConnectionID := binary.BigEndian.Uint64(resp[8:])
-
-	// Announce
-	buf = make([]byte, 98)
-	binary.BigEndian.PutUint64(buf[0:], respConnectionID)
-	binary.BigEndian.PutUint32(buf[8:], 1) // action
-	binary.BigEndian.PutUint32(buf[12:], transactionID)
-	copy(buf[16:], torrent.getInfoHash())
-	copy(buf[36:], client.peerID)
-
-	downloadedBytes := uint64(torrent.getDownloadedSize())
-	binary.BigEndian.PutUint64(buf[56:], downloadedBytes)
-	binary.BigEndian.PutUint64(buf[64:], uint64(torrent.totalSize)-downloadedBytes)
-	binary.BigEndian.PutUint64(buf[72:], uint64(torrent.uploadedBytes))
-	binary.BigEndian.PutUint32(buf[80:], event)          // event
-	binary.BigEndian.PutUint32(buf[84:], 0)              // ip address
-	binary.BigEndian.PutUint32(buf[88:], 0)              // key
-	binary.BigEndian.PutUint32(buf[92:], math.MaxUint32) // num_want (-1)
-	binary.BigEndian.PutUint16(buf[96:], 6881)           // port
-	if n, err := conn.Write(buf); err != nil {
-		return nil, err
-	} else if n != 98 {
-		return nil, fmt.Errorf("expected to write 98 bytes, wrote %d", n)
-	}
-
-	resp = make([]byte, 512)
-	n, err := conn.Read(resp)
-	if err != nil {
-		return nil, err
-	} else if n < 20 {
-		return nil, fmt.Errorf("expected to read at least 20 bytes, received %d", n)
-	}
-
-	if binary.BigEndian.Uint32(resp) != 1 {
-		return nil, errors.New("action mismatch")
-	} else if binary.BigEndian.Uint32(resp[4:]) != transactionID {
-		return nil, errors.New("transaction id mismatch")
-	}
-
-	//leechers := binary.BigEndian.Uint32(resp[12:])
-	//seeders := binary.BigEndian.Uint32(resp[16:])
-
-	responseMap := make(map[string]interface{})
-	responseMap["interval"] = int64(binary.BigEndian.Uint32(resp[8:]))
-	responseMap["peers"] = string(resp[20:n])
-	return responseMap, nil
-}
-
-func (torrent *Torrent) sendHTTPTrackerRequest(event uint32) (map[string]interface{}, error) {
-	var eventString string
-	switch event {
-	case TrackerEventCompleted:
-		eventString = "event=completed&"
-	case TrackerEventStarted:
-		eventString = "event=started&"
-	case TrackerEventStopped:
-		eventString = "event=stopped&"
-	}
-
-	downloadedBytes := torrent.getDownloadedSize()
-	httpResponse, err := http.Get(fmt.Sprintf("%s?%speer_id=%s&info_hash=%s&left=%d&compact=1&downloaded=%d&uploaded=%d&port=6881",
-		torrent.announceURL, eventString,
-		url.QueryEscape(string(client.peerID)),
-		url.QueryEscape(string(torrent.getInfoHash())),
-		torrent.totalSize-downloadedBytes,
-		downloadedBytes, torrent.uploadedBytes))
-	if err != nil {
-		return nil, err
-	}
-	defer httpResponse.Body.Close()
-
-	if httpResponse.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("bad response from tracker (%d): %s",
-			httpResponse.StatusCode, httpResponse.Status)
-	}
-
-	resp, err := bencode.Decode(httpResponse.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	if failureReason, exists := resp["failure reason"]; exists {
-		return nil, errors.New(failureReason.(string))
-	}
-	return resp, nil
-}
-
-func (torrent *Torrent) sendTrackerRequest(event uint32) (map[string]interface{}, error) {
-	switch torrent.trackerProtocol {
-	case TrackerHTTP:
-		return torrent.sendHTTPTrackerRequest(event)
-	case TrackerUDP:
-		return torrent.sendUDPTrackerRequest(event)
-	}
-	return nil, errors.New("unknown tracker protocol")
+	dataHash := sha1.Sum(data)
+	return bytes.Equal(dataHash[:], []byte(torrent.pieces[pieceIndex].hash))
 }
 
 func (torrent *Torrent) getPieceLength(pieceIndex uint32) int64 {
@@ -575,6 +518,12 @@ func (torrent *Torrent) connectToPeers(peers interface{}) {
 		for i := 0; i < len(peers); i += 6 {
 			peer := NewPeer(torrent)
 			peer.ip = net.IPv4(peers[i], peers[i+1], peers[i+2], peers[i+3])
+			if _, known := torrent.knownPeers[peer.ip.String()]; known {
+				torrent.totalPeerCount--
+				continue
+			}
+			torrent.knownPeers[peer.ip.String()] = struct{}{}
+
 			peer.port = binary.BigEndian.Uint16([]byte(peers[i+4:]))
 			go peer.connect()
 		}
@@ -584,13 +533,20 @@ func (torrent *Torrent) connectToPeers(peers interface{}) {
 		for _, dict := range peers {
 			dict := dict.(map[string]interface{})
 
-			peer := NewPeer(torrent)
-			peer.id = dict["peer id"].(string)
 			addr, err := net.ResolveIPAddr("ip", dict["ip"].(string))
 			if err != nil {
+				torrent.totalPeerCount--
 				continue
 			}
 
+			if _, known := torrent.knownPeers[addr.IP.String()]; known {
+				torrent.totalPeerCount--
+				continue
+			}
+			torrent.knownPeers[addr.IP.String()] = struct{}{}
+
+			peer := NewPeer(torrent)
+			peer.id = dict["peer id"].(string)
 			peer.ip = addr.IP
 			peer.port = uint16(dict["port"].(int64))
 			go peer.connect()
@@ -674,7 +630,7 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 		for _, peer := range torrent.activePeers {
 			peer.done <- struct{}{}
 		}
-		torrent.sendTrackerRequest(TrackerEventCompleted)
+		torrent.announceToTrackers(TrackerEventCompleted)
 	} else {
 		for _, peer := range torrent.activePeers {
 			peer.sendHaveChannel <- pieceMessage.index
@@ -714,13 +670,7 @@ func (torrent *Torrent) requestPieceFromPeer(peer *Peer) {
 }
 
 func (torrent *Torrent) handleAddPeer(peer *Peer) {
-	if _, exists := torrent.activePeers[peer.id]; exists {
-		// we are already connected to that peer
-		peer.done <- struct{}{}
-		return
-	}
-
-	torrent.activePeers[peer.id] = peer
+	torrent.activePeers = append(torrent.activePeers, peer)
 	fmt.Printf("[%s] %d active peers\n", torrent.name, len(torrent.activePeers))
 	if torrent.completedPieces == len(torrent.pieces) {
 		peer.done <- struct{}{}
@@ -728,7 +678,13 @@ func (torrent *Torrent) handleAddPeer(peer *Peer) {
 }
 
 func (torrent *Torrent) handleRemovePeer(peer *Peer) {
-	delete(torrent.activePeers, peer.id)
+	for k, p := range torrent.activePeers {
+		if p == peer {
+			torrent.activePeers = append(torrent.activePeers[:k], torrent.activePeers[k+1:]...)
+			break
+		}
+	}
+
 	peer.done <- struct{}{}
 	fmt.Printf("[%s] %d active peers\n", torrent.name, len(torrent.activePeers))
 }
@@ -782,7 +738,7 @@ func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequ
 		}
 	}
 
-	torrent.uploadedBytes += blockRequestMessage.length
+	torrent.uploaded += uint64(blockRequestMessage.length)
 	blockRequestMessage.from.sendPieceBlockChannel <- &BlockMessage{
 		blockRequestMessage.index,
 		blockRequestMessage.begin,

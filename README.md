@@ -17,5 +17,4 @@ $ ./gotorrent file.torrent[ file2.torrent[ ...]]
 * Server-side (allow other peers to connect to us)
 * Option to seed after completed download
 * Implement a choking algorithm to prevent peers from choking us
-* Parse "announce-list" for more trackers
 * More tests!
