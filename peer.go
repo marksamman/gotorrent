@@ -27,6 +27,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net"
@@ -96,14 +97,8 @@ func NewPeer(torrent *Torrent) *Peer {
 
 func (peer *Peer) readN(n int) ([]byte, error) {
 	buf := make([]byte, n)
-	for pos := 0; pos < n; {
-		count, err := peer.connection.Read(buf[pos:])
-		if err != nil {
-			return nil, err
-		}
-		pos += count
-	}
-	return buf, nil
+	_, err := io.ReadFull(peer.connection, buf)
+	return buf, err
 }
 
 func (peer *Peer) close() {

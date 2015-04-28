@@ -511,9 +511,8 @@ func (torrent *Torrent) getDownloadedSize() int64 {
 }
 
 func (torrent *Torrent) connectToPeers(peers interface{}) {
-	switch peers.(type) {
+	switch peers := peers.(type) {
 	case string:
-		peers := peers.(string)
 		torrent.totalPeerCount += len(peers) / 6
 		for i := 0; i < len(peers); i += 6 {
 			peer := NewPeer(torrent)
@@ -528,7 +527,6 @@ func (torrent *Torrent) connectToPeers(peers interface{}) {
 			go peer.connect()
 		}
 	case []interface{}:
-		peers := peers.([]interface{})
 		torrent.totalPeerCount += len(peers)
 		for _, dict := range peers {
 			dict := dict.(map[string]interface{})

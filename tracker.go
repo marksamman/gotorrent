@@ -69,7 +69,7 @@ type TrackerRequestData struct {
 
 func (tracker *Tracker) start(data *TrackerRequestData) {
 	if err := tracker.announce(data); err != nil {
-		log.Printf("Failed to connect to tracker: %s\n", tracker.announceURL)
+		log.Printf("Failed to connect to tracker: %s (%s)\n", tracker.announceURL, err)
 		return
 	}
 
