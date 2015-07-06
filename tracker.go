@@ -166,15 +166,15 @@ func (tracker *Tracker) sendUDPRequest(data *TrackerRequestData) error {
 	binary.BigEndian.PutUint32(buf[92:], math.MaxUint32) // num_want (-1)
 	binary.BigEndian.PutUint16(buf[96:], 6881)           // port
 	if n, err := conn.Write(buf); err != nil {
-		return err
+		return fmt.Errorf("failed to write announce message: %s", err)
 	} else if n != 98 {
 		return fmt.Errorf("expected to write 98 bytes, wrote %d", n)
 	}
 
-	resp = make([]byte, 512)
+	resp = make([]byte, 1500)
 	n, err := conn.Read(resp)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read announce response: %s", err)
 	} else if n < 20 {
 		return fmt.Errorf("expected to read at least 20 bytes, received %d", n)
 	}
