@@ -32,6 +32,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/marksamman/bencode"
@@ -107,7 +108,16 @@ func (tracker *Tracker) announce(data *TrackerRequestData) (err error) {
 }
 
 func (tracker *Tracker) sendUDPRequest(data *TrackerRequestData) error {
-	conn, err := net.Dial("udp", tracker.announceURL[6:])
+	address := tracker.announceURL[6:]
+	if slashIndex := strings.IndexByte(address, '/'); slashIndex != -1 {
+		address = address[:slashIndex]
+	}
+
+	if strings.IndexByte(address, ':') == -1 {
+		address += ":6969"
+	}
+
+	conn, err := net.Dial("udp", address)
 	if err != nil {
 		return err
 	}
