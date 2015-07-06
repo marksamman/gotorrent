@@ -41,16 +41,27 @@ var client Client
 var fileWriterChannel chan *FileWriterMessage
 
 type FileWriterMessage struct {
-	file    *os.File
-	offset  int64
-	data    []byte
-	torrent *Torrent
+	filename string
+	offset   int64
+	data     []byte
+	torrent  *Torrent
 }
 
 func fileWriterListener() {
 	for {
 		message := <-fileWriterChannel
-		message.file.WriteAt(message.data, message.offset)
+
+		file, err := os.OpenFile(message.filename, os.O_WRONLY, 0600)
+		if err != nil {
+			if file, err = os.Create(message.filename); err != nil {
+				log.Printf("Failed to write data to %s: %s", message.filename, err)
+				continue
+			}
+		}
+
+		file.WriteAt(message.data, message.offset)
+		file.Close()
+
 		go func() {
 			message.torrent.fileWriteDone <- struct{}{}
 		}()

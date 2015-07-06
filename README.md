@@ -9,6 +9,7 @@ $ ./gotorrent file.torrent[ file2.torrent[ ...]]
 ```
 
 ##### TODO
+* LRU cache for file handles to decrease the number of fopen/fclose calls
 * When downloading the same piece from multiple peers, send cancel to the peers who weren't fast enough
 * Show upload/download speed
 * Limit upload/download speed

@@ -79,7 +79,7 @@ type TorrentPiece struct {
 }
 
 type File struct {
-	handle *os.File
+	path   string
 	begin  int64
 	length int64
 }
@@ -246,11 +246,10 @@ func (torrent *Torrent) open(filename string) error {
 			file, err := os.OpenFile(fullPath, os.O_RDWR, 0600)
 			if err == nil {
 				torrent.findCompletedPieces(file, begin, length, k)
-			} else if file, err = os.Create(fullPath); err != nil {
-				return err
+				file.Close()
 			}
 
-			torrent.files = append(torrent.files, File{file, begin, length})
+			torrent.files = append(torrent.files, File{fullPath, begin, length})
 			begin += length
 		}
 	} else {
@@ -266,18 +265,23 @@ func (torrent *Torrent) open(filename string) error {
 		file, err := os.OpenFile(fileName, os.O_RDWR, 0600)
 		if err == nil {
 			torrent.findCompletedPieces(file, 0, length, 0)
-		} else if file, err = os.Create(fileName); err != nil {
-			return err
+			file.Close()
 		}
-		torrent.files = []File{{file, 0, length}}
+		torrent.files = []File{{fileName, 0, length}}
 	}
 	return nil
 }
 
 func (torrent *Torrent) findCompletedPieces(file *os.File, begin, length int64, fileIndex int) {
-	if fi, err := file.Stat(); err != nil {
+	fi, err := file.Stat()
+	if err != nil {
 		return
-	} else if fi.Size() > length {
+	}
+
+	size := fi.Size()
+	if size == 0 {
+		return
+	} else if size > length {
 		file.Truncate(0)
 		return
 	}
@@ -304,15 +308,22 @@ func (torrent *Torrent) findCompletedPieces(file *os.File, begin, length int64, 
 
 		for bufPos != 0 {
 			fileIndex--
+
 			f := torrent.files[fileIndex]
 
+			handle, err := os.OpenFile(f.path, os.O_RDONLY, 0600)
+			if err != nil {
+				return
+			}
+			defer handle.Close()
+
 			if bufPos > f.length {
-				if n, err := f.handle.Read(buf[bufPos-f.length : bufPos]); err != nil || int64(n) != f.length {
+				if n, err := handle.Read(buf[bufPos-f.length : bufPos]); err != nil || int64(n) != f.length {
 					return
 				}
 				bufPos -= f.length
 			} else {
-				if n, err := f.handle.ReadAt(buf[:bufPos], f.length-bufPos); err != nil || int64(n) != bufPos {
+				if n, err := handle.ReadAt(buf[:bufPos], f.length-bufPos); err != nil || int64(n) != bufPos {
 					return
 				}
 				break
@@ -377,20 +388,20 @@ func (torrent *Torrent) startTrackers() {
 
 func (torrent *Torrent) stopTrackers() {
 	data := torrent.getTrackerRequestData(TrackerEventStopped)
-	for _, trackerId := range torrent.activeTrackers {
+	for _, trackerID := range torrent.activeTrackers {
 		go func(announceChannel chan *TrackerRequestData, stopChannel chan struct{}) {
 			announceChannel <- data
 			stopChannel <- struct{}{}
-		}(torrent.trackers[trackerId].announceChannel, torrent.trackers[trackerId].stopChannel)
+		}(torrent.trackers[trackerID].announceChannel, torrent.trackers[trackerID].stopChannel)
 	}
 }
 
 func (torrent *Torrent) announceToTrackers(event uint32) {
 	data := torrent.getTrackerRequestData(event)
-	for _, trackerId := range torrent.activeTrackers {
+	for _, trackerID := range torrent.activeTrackers {
 		go func(channel chan *TrackerRequestData) {
 			channel <- data
-		}(torrent.trackers[trackerId].announceChannel)
+		}(torrent.trackers[trackerID].announceChannel)
 	}
 }
 
@@ -436,13 +447,13 @@ func (torrent *Torrent) download() {
 			torrent.totalPeerCount--
 		case peers := <-torrent.peersChannel:
 			torrent.connectToPeers(peers)
-		case trackerId := <-torrent.activeTrackerChannel:
-			torrent.activeTrackers = append(torrent.activeTrackers, trackerId)
+		case trackerID := <-torrent.activeTrackerChannel:
+			torrent.activeTrackers = append(torrent.activeTrackers, trackerID)
 			fmt.Printf("[%s] %d active trackers\n", torrent.name, len(torrent.activeTrackers))
-		case trackerId := <-torrent.requestAnnounceDataChannel:
+		case trackerID := <-torrent.requestAnnounceDataChannel:
 			go func(channel chan *TrackerRequestData, data *TrackerRequestData) {
 				channel <- data
-			}(torrent.trackers[trackerId].announceChannel, torrent.getTrackerRequestData(TrackerEventNone))
+			}(torrent.trackers[trackerID].announceChannel, torrent.getTrackerRequestData(TrackerEventNone))
 		}
 	}
 	torrent.stopTrackers()
@@ -455,17 +466,13 @@ func (torrent *Torrent) download() {
 		}
 	}
 
-	for k := range torrent.files {
-		torrent.files[k].handle.Close()
-	}
-
 	if len(torrent.activeTrackers) != 0 {
 		fmt.Printf("[%s] Waiting for %d trackers to stop...\n", torrent.name, len(torrent.activeTrackers))
 		for len(torrent.activeTrackers) != 0 {
 			select {
-			case trackerId := <-torrent.stoppedTrackerChannel:
+			case trackerID := <-torrent.stoppedTrackerChannel:
 				for k, v := range torrent.activeTrackers {
-					if v == trackerId {
+					if v == trackerID {
 						torrent.activeTrackers = append(torrent.activeTrackers[:k], torrent.activeTrackers[k+1:]...)
 						break
 					}
@@ -616,9 +623,9 @@ func (torrent *Torrent) handlePieceMessage(pieceMessage *PieceMessage) {
 		}
 
 		torrent.pendingFileWrites++
-		go func(handle *os.File, offset int64, data []byte) {
-			fileWriterChannel <- &FileWriterMessage{handle, offset, data, torrent}
-		}(file.handle, beginPos-file.begin, pieceMessage.data[:amountWrite])
+		go func(path string, offset int64, data []byte) {
+			fileWriterChannel <- &FileWriterMessage{path, offset, data, torrent}
+		}(file.path, beginPos-file.begin, pieceMessage.data[:amountWrite])
 		pieceMessage.data = pieceMessage.data[amountWrite:]
 		beginPos += amountWrite
 	}
@@ -725,15 +732,22 @@ func (torrent *Torrent) handleBlockRequestMessage(blockRequestMessage *BlockRequ
 			n = int64(blockRequestMessage.length) - pos
 		}
 
-		file.handle.Seek(cursor-file.begin, os.SEEK_SET)
+		handle, err := os.OpenFile(file.path, os.O_RDONLY, 0600)
+		if err != nil {
+			return
+		}
+
+		handle.Seek(cursor-file.begin, os.SEEK_SET)
 		end := pos + n
 		for pos < end {
-			count, err := file.handle.Read(block[pos:end])
+			count, err := handle.Read(block[pos:end])
 			if err != nil {
+				handle.Close()
 				return
 			}
 			pos += int64(count)
 		}
+		handle.Close()
 	}
 
 	torrent.uploaded += uint64(blockRequestMessage.length)
