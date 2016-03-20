@@ -212,10 +212,13 @@ func (tracker *Tracker) sendHTTPRequest(data *TrackerRequestData) error {
 			data.uploaded,
 		),
 	)
+	if httpResponse != nil {
+		defer httpResponse.Body.Close()
+	}
+
 	if err != nil {
 		return err
 	}
-	defer httpResponse.Body.Close()
 
 	if httpResponse.StatusCode != http.StatusOK {
 		return fmt.Errorf("bad response from tracker (%d): %s",
