@@ -23,7 +23,6 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"math/rand"
@@ -95,12 +94,8 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 
 	// Generate a 20 byte peerId
-	var peerID bytes.Buffer
-	peerID.WriteString("-GO10000")
-	for i := 0; i < 12; i++ {
-		peerID.WriteByte(byte(rand.Intn(256)))
-	}
-	client.peerID = peerID.Bytes()
+	client.peerID = []byte("-GO10000000000000000")
+	rand.Read(client.peerID[8:])
 
 	// Open torrent file
 	for i := 1; i <= torrentCount; i++ {
